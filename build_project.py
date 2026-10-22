@@ -92,6 +92,11 @@ def scan_leaks(files) -> list:
     ]
     compiled = [(re.compile(p), label) for p, label in patterns]
 
+    # 必须保持纯 ASCII 的文件 —— 写中文会让安装/启动在中文 Windows 上直接失败。
+    # 这两个坑都踩过：requirements.txt 里中文注释 → pip 按 GBK 解码崩掉；
+    # .bat 里中文 → cmd 代码页显示乱码。
+    ascii_only = {"requirements.txt", "启动.bat"}
+
     # 允许出现的绝对路径：程序安装位置（每个人机器上都一样，不是隐私）
     # 注意这里用普通字符串，路径里的反斜杠只写一个。
     path_allow = (
@@ -114,6 +119,13 @@ def scan_leaks(files) -> list:
             text = p.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
+        # 必须纯 ASCII 的文件：出现非 ASCII 就是致命问题，直接拦下
+        if p.name in ascii_only:
+            bad_chars = sorted({c for c in text if ord(c) >= 128})
+            if bad_chars:
+                hits.append(("非 ASCII 字符（会导致安装/启动失败）",
+                             rel.as_posix(), 0))
+                continue
         for i, line in enumerate(text.splitlines(), 1):
             for rx, label in compiled:
                 if rx.search(line):

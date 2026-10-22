@@ -1,4 +1,4 @@
-# 求职工作台 runtime dependencies
+# Job workbench runtime dependencies
 #
 # KEEP THIS FILE ASCII-ONLY. On a Chinese-locale Windows, pip reads this
 # file with the system codepage (GBK). Chinese comments stored as UTF-8

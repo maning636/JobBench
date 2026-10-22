@@ -665,5 +665,25 @@ if _bat.exists():
     check("启动文件是纯 ASCII（cmd 代码页会把中文显示成乱码）",
           all(ord(ch) < 128 for ch in _t))
 
+# 同一个坑换了个文件位置：requirements.txt 里写中文注释，
+# pip 在中文 Windows 上按 GBK 解码 → UnicodeDecodeError → 一个包都装不上。
+# 而且它不报错给用户看，只在日志里留一行 traceback。
+# 这个坑已经踩过两次（一次在 requirements，一次在 .bat），
+# 所以这次用测试把它钉死，而不是靠注释提醒。
+_req = Path(__file__).resolve().parents[1] / "requirements.txt"
+check("依赖清单存在", _req.exists(), str(_req))
+if _req.exists():
+    _rt = _req.read_text(encoding="utf-8", errors="replace")
+    check("依赖清单是纯 ASCII（pip 按系统代码页读，中文注释会让安装全失败）",
+          all(ord(ch) < 128 for ch in _rt),
+          "非 ASCII 字符: " + repr(
+              "".join(sorted({c for c in _rt if ord(c) >= 128}))))
+    # 真实依赖必须列全 —— 漏一个就是「装完才发现用不了」
+    for _mod, _pkg in (("flask", "flask"), ("bs4", "beautifulsoup4"),
+                       ("websockets", "websockets")):
+        check(f"依赖清单里列了 {_pkg}（代码里 import {_mod}）",
+              _pkg in _rt.lower(),
+              f"requirements.txt 里找不到 { _pkg }")
+
 print("\n" + "=" * 62)
 print(f"  通过 {len(PASS)} / {len(PASS) + len(FAIL)}")
