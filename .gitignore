@@ -1,0 +1,63 @@
+# JobForge .gitignore
+# ─────────────────────────────────────────────────────────────
+# 上一版这个文件开头带 BOM，而且规则不全 —— 真要 git push 的话，
+# 25 个调试残留 txt 和 server.log 全会进公开仓库。
+# v1.2.0 的 zip 就因为塞了开发者的求职记录出过隐私事故，这次先堵死。
+#
+# 本文件不要带 BOM：带 BOM 时某些 git 版本会把第一行当成规则名。
+
+# ── 用户数据：绝不进仓库 ──────────────────────────────────
+# 含 candidate.json（简历）、llm.json（API Key）、*.db（岗位库）
+data/
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# ── 本机运行痕迹 ─────────────────────────────────────────
+server.log
+server.err.log
+server.pid
+*.pid
+
+# ── 隐私兜底：任何 txt 都可能是某人投简历时存下来的 ─────────
+# requirements.txt 是白名单，必须显式放回来
+*.txt
+!requirements.txt
+
+# ── 密钥与配置 ───────────────────────────────────────────
+.env
+.env.*
+*.key
+*.pem
+llm.json
+candidate.json
+
+# ── Python ───────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+build/
+dist/
+
+# ── 打包产物 ─────────────────────────────────────────────
+*.zip
+
+# ── 编辑器 / 系统 ────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ── 临时验证脚本（本项目开发时的副产品）────────────────────
+_tmp*
+_t1.png
+_t2.png
+_dump.html

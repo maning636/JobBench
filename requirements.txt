@@ -1,0 +1,16 @@
+# 求职工作台 runtime dependencies
+#
+# KEEP THIS FILE ASCII-ONLY. On a Chinese-locale Windows, pip reads this
+# file with the system codepage (GBK). Chinese comments stored as UTF-8
+# without a BOM make pip raise UnicodeDecodeError and install NOTHING.
+# That is a silent, total install failure on the exact machine we target.
+#
+# Keep the dependency list minimal: every extra package is another chance
+# for the first-run installer to fail.
+Flask>=2.3
+
+# HTML parsing for the BOSS list-page fallback path (adapters/sources/boss.py).
+beautifulsoup4>=4.12
+
+# CDP websocket client for the browser session (adapters/sources/browser.py).
+websockets>=12.0

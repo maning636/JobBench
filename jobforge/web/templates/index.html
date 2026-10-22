@@ -1,0 +1,433 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="description" content="求职工作台 —— 每天自动帮你把该投的岗位挑出来">
+<title>求职工作台 · 每天自动帮你把该投的岗位挑出来</title>
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+
+<header class="top">
+  <div class="wrap top-in">
+    <div class="brand"><span class="brand-mark">求</span> 求职工作台</div>
+    <nav class="tabs" id="tabs">
+      <button class="tab on" data-tab="today">今天</button>
+      <button class="tab" data-tab="track">投递<span class="tab-badge" id="tabBadge" hidden>0</span></button>
+      <button class="tab" data-tab="resume">简历</button>
+      <button class="tab" data-tab="parttime">兼职</button>
+      <button class="tab" data-tab="insight">复盘</button>
+      <button class="tab" data-tab="settings">设置</button>
+    </nav>
+    <div class="top-spacer"></div>
+    <span class="pill" id="collectPill" title="每日采集状态"><span class="dot"></span> 采集状态</span>
+    <button class="btn ghost sm" onclick="openDrawer('import')">导入</button>
+  </div>
+</header>
+
+<!-- ══════════════ 今天 ══════════════
+     设计理念：首页不是岗位信息流，是「今天该做什么」。
+     第一屏必须回答：一个应届生打开它，30 秒内知道该干什么。 -->
+<main class="wrap pane on" id="pane-today">
+
+  <!-- 行动区：整个产品的第一视点 -->
+  <section class="focus" id="focus">
+    <div class="focus-main">
+      <p class="focus-lb" id="focusLabel">今天要做的三件事</p>
+      <h1 class="focus-t" id="focusTitle">正在读取…</h1>
+      <p class="focus-s" id="focusSub"></p>
+      <div class="focus-cta">
+        <button class="btn" id="focusBtn" onclick="onFocusClick()">开始处理</button>
+        <button class="btn ghost" onclick="openCollectWizard()">立即采集</button>
+      </div>
+    </div>
+    <div class="focus-side">
+      <div class="mini"><span class="k">今日新增</span><span class="v num" id="mNew">—</span></div>
+      <div class="mini"><span class="k">待跟进</span><span class="v num" id="mFollow">—</span></div>
+      <div class="mini"><span class="k">进行中投递</span><span class="v num" id="mOpen">—</span></div>
+    </div>
+  </section>
+
+  <!-- 待办清单：优先级排序，每条都能直接处理 -->
+  <section class="todo" id="remindBox" hidden>
+    <div class="todo-hd"><h2>待办</h2><span class="sub" id="todoSub"></span></div>
+    <ul id="remindList"></ul>
+  </section>
+
+  <!-- 采集状态条：让"每日自动"可见，否则用户不知道数据在不在长 -->
+  <section class="collect" id="collectBar">
+    <div class="collect-l">
+      <span class="dot" id="collectDot"></span>
+      <div>
+        <div class="ct" id="collectTitle">每日采集</div>
+        <div class="cs" id="collectSub">检查中…</div>
+      </div>
+    </div>
+    <button class="btn sm" onclick="openCollectWizard()">去开启</button>
+  </section>
+
+  <!-- 值得投的：默认已排序、限量。用户不需要自己从几十个里挑 -->
+  <section class="picks" id="picksBox">
+    <div class="sec-hd">
+      <h2>值得看一眼的</h2>
+      <span class="sub" id="picksSub">已按匹配度排序</span>
+    </div>
+    <div id="cards"></div>
+    <div class="more-row">
+      <button class="btn ghost" onclick="toggleAll()">看全部符合条件的岗位</button>
+      <span class="dim" id="filterStat"></span>
+    </div>
+    <div id="droppedBox"></div>
+    <div id="filtersWrap" hidden>
+      <section class="filters">
+        <div class="filters-hd"><h3>硬性条件</h3>
+          <span class="n" id="filterNote">不符合的会被自动筛掉</span></div>
+        <div class="fgrid">
+          <div class="field"><label for="fCity">城市</label>
+            <input id="fCity" placeholder="如：北京,上海" data-k="cities"></div>
+          <div class="field"><label for="fSalary">薪资下限（元/月）</label>
+            <input id="fSalary" type="number" placeholder="如 8000" data-k="salary_min"></div>
+          <div class="field"><label for="fEdu">最低学历</label>
+            <select id="fEdu" data-k="edu">
+              <option value="">不限</option><option value="大专">大专</option>
+              <option value="本科">本科</option><option value="硕士">硕士</option>
+            </select></div>
+          <div class="field"><label for="fKw">关键词</label>
+            <input id="fKw" placeholder="如：Java,算法" data-k="include"></div>
+          <label class="switch"><input type="checkbox" id="fFresh" data-k="fresh">
+            <span class="track"></span>只要应届/不限经验</label>
+          <label class="switch"><input type="checkbox" id="fOut" data-k="allow_outsourcing">
+            <span class="track"></span>保留疑似外包</label>
+        </div>
+        <div class="row-end">
+          <button class="btn" onclick="load()">应用筛选</button>
+          <button class="btn ghost" onclick="resetFilters()">重置</button>
+        </div>
+      </section>
+      <section class="filters" id="cmpBox" style="display:none">
+        <div class="filters-hd"><h3>这几个岗怎么选</h3></div>
+        <div id="cmpExplain"></div>
+        <div class="scroll-x"><table class="cmp" id="cmpTable"></table></div>
+      </section>
+    </div>
+  </section>
+  <div style="height:80px"></div>
+</main>
+
+<!-- ══════════════ 投递 ══════════════ -->
+<main class="wrap pane" id="pane-track">
+  <section class="hero sm"><h1>投递台账</h1>
+    <p>投了哪些、多久没回音、该跟进哪几个</p></section>
+  <div class="tstats" id="tstats"></div>
+  <section class="filters">
+    <div class="chips" id="statusChips">
+      <button class="chip on" data-st="">全部</button>
+      <button class="chip" data-st="applied">已投递</button>
+      <button class="chip" data-st="assessment">笔试中</button>
+      <button class="chip" data-st="interview">面试中</button>
+      <button class="chip" data-st="offer">已获 Offer</button>
+      <button class="chip" data-st="rejected">已拒绝</button>
+    </div>
+    <div class="row-end"><a class="link" href="/api/export.tracking.csv">导出 CSV ↓</a></div>
+  </section>
+  <div class="apps" id="apps"></div>
+</main>
+
+<!-- ══════════════ 简历 ══════════════ -->
+<main class="wrap pane" id="pane-resume">
+  <section class="hero sm"><h1>我的简历</h1>
+    <p>不同方向用不同版本，投的时候自动记下用的是哪版</p></section>
+  <section class="filters">
+    <div class="filters-hd"><h3>新增简历版本</h3>
+      <span class="n">默认版本会在投递时自动关联</span></div>
+    <div class="fgrid">
+      <div class="field"><label for="rName">版本名</label>
+        <input id="rName" placeholder="如：校招版 / Java方向"></div>
+      <div class="field"><label for="rTag">面向方向</label>
+        <input id="rTag" placeholder="如：Java后端"></div>
+    </div>
+    <textarea id="rContent" class="ta" style="margin-top:var(--s3)"
+      placeholder="粘贴简历全文（技能段 + 项目段最有用）"></textarea>
+    <div class="row-end">
+      <button class="btn" onclick="addResume()">保存为新版本</button>
+      <label class="switch" style="padding-top:0">
+        <input type="checkbox" id="rDefault"><span class="track"></span>设为默认</label>
+    </div>
+  </section>
+  <div class="rlist" id="rlist"></div>
+</main>
+
+<!-- ══════════════ 复盘 ══════════════ -->
+<main class="wrap pane" id="pane-insight">
+  <section class="hero sm"><h1>复盘</h1>
+    <p>投出去的岗位，最后哪些真的有回音</p></section>
+  <div id="insight"></div>
+</main>
+
+<!-- ══════════════ 兼职 ══════════════
+     兼职的判据跟全职完全是两套：
+     全职比「月薪 + 岗位要求」，兼职比「时薪 + 能不能居家 + 干什么活」。
+     所以这里不共用全职能用的筛选器，也不共用那张匹配度卡片。 -->
+<main class="wrap pane" id="pane-parttime">
+  <section class="hero sm">
+    <h1>兼职</h1>
+    <p>兼职不能按月薪比 —— 全折成<strong>时薪</strong>才有的比，
+       再看能不能居家、到底干什么活、有没有坑。</p>
+  </section>
+
+  <section class="filters">
+    <div class="filters-hd"><h3>筛选</h3>
+      <span class="n">按你要的条件挑，挑完自动按时薪排</span></div>
+    <div class="fgrid">
+      <div class="field"><label for="ptHourly">时薪不低于（元/小时）</label>
+        <input id="ptHourly" type="number" placeholder="留空 = 不限" min="0" step="1"></div>
+      <div class="field"><label for="ptRemote">能不能居家</label>
+        <select id="ptRemote">
+          <option value="">不限</option>
+          <option value="full">只要完全居家</option>
+          <option value="hybrid">混合办公也行</option>
+          <option value="onsite">只看需要到岗的</option>
+          <option value="any">都行（没说也行）</option>
+        </select></div>
+      <div class="field"><label for="ptSettle">结算方式</label>
+        <select id="ptSettle"><option value="">不限</option></select></div>
+      <div class="field span2"><label for="ptKw">关键词</label>
+        <input id="ptKw" placeholder="如：家教、客服、标注"></div>
+    </div>
+    <div class="field" style="margin-top:12px">
+      <label>工作内容（可多选，留空 = 不限）</label>
+      <div class="chips" id="ptCats"></div>
+    </div>
+    <div class="row-end">
+      <label class="switch"><input type="checkbox" id="ptNoScam" checked>
+        <span class="track"></span>藏起有诈骗信号的</label>
+      <label class="switch"><input type="checkbox" id="ptNoFake">
+        <span class="track"></span>藏起「假居家」（客服/电销那种）</label>
+      <button class="btn" onclick="screenPartTime()">筛一下</button>
+      <span class="dim" id="ptStat"></span>
+    </div>
+  </section>
+
+  <section id="ptEmpty" class="emptyhint" hidden></section>
+
+  <section id="ptResult" hidden>
+    <div class="section">
+      <div class="sec-hd"><h2>按时薪排</h2>
+        <span class="sub" id="ptSub"></span>
+        <button class="btn sm ghost" onclick="copyPtReport()">复制结论</button></div>
+      <div class="why" id="ptExplain"></div>
+      <div id="ptCmp" class="scroll-x" style="margin-top:12px"></div>
+    </div>
+
+    <div class="section" id="ptPendingBox" hidden>
+      <div class="sec-hd"><h3>算不出时薪的（没法参与比较）</h3>
+        <span class="sub">不是不好，是 JD 没写每天几小时</span></div>
+      <div id="ptPending" class="pt-list"></div>
+    </div>
+
+    <div class="section" id="ptKeptBox" hidden>
+      <div class="sec-hd"><h3>符合条件的</h3>
+        <span class="sub" id="ptKeptSub"></span></div>
+      <div id="ptKept" class="pt-list"></div>
+    </div>
+  </section>
+</main>
+
+<!-- ══════════════ 设置 ══════════════ -->
+<main class="wrap pane" id="pane-settings">
+  <section class="hero sm"><h1>设置</h1><p>每日采集与模型接入</p></section>
+
+  <section class="filters">
+    <div class="filters-hd"><h3>每日采集</h3>
+      <span class="n">这是岗位数量增长的唯一途径</span></div>
+    <div class="fgrid">
+      <div class="field"><label for="cKw">关键词</label>
+        <input id="cKw" placeholder="Java"></div>
+      <div class="field"><label for="cCity">城市（留空=全国）</label>
+        <input id="cCity" placeholder="北京"></div>
+      <div class="field"><label for="cPages">每次翻几页</label>
+        <input id="cPages" type="number" value="3" min="1" max="10"></div>
+    </div>
+    <div class="row-end">
+      <button class="btn" onclick="openCollectWizard()">开始设置每日采集</button>
+      <span class="dim" id="collectRes"></span>
+    </div>
+    <p class="note" id="autoNote">
+      上面三步做完，岗位就会攒起来。还想更省事，可以让电脑<b>每天定时自己采一次</b>。
+    </p>
+    <div class="field" style="max-width:220px;margin-top:10px">
+      <label for="autoAt">每天几点自动采</label>
+      <input id="autoAt" type="time" value="09:30">
+    </div>
+    <div class="row-end" style="margin-top:8px">
+      <button class="btn" id="autoBtn" onclick="toggleAuto()">开启每日自动采集</button>
+      <span class="dim" id="autoRes"></span>
+    </div>
+    <div class="collect-hist" id="collectHist"></div>
+  </section>
+
+  <section class="filters">
+    <div class="filters-hd"><h3>模型接入（可选）</h3>
+      <span class="n" id="llmNote">不填也能用 —— 规则引擎照常工作</span></div>
+    <div class="fgrid">
+      <div class="field span2"><label for="llmUrl">Base URL</label>
+        <input id="llmUrl" placeholder="https://你的服务地址/v1" autocomplete="off"></div>
+      <div class="field"><label for="llmKey">API Key</label>
+        <input id="llmKey" type="password" placeholder="留空表示不修改" autocomplete="off"></div>
+      <div class="field"><label for="llmModel">模型名</label>
+        <input id="llmModel" placeholder="如 deepseek-chat" autocomplete="off"></div>
+    </div>
+    <div class="row-end">
+      <button class="btn" onclick="saveLLM()">保存</button>
+      <button class="btn ghost" onclick="testLLM()">测试连通</button>
+      <span class="dim" id="llmRes"></span>
+    </div>
+    <p class="note">任何兼容 OpenAI <code>/v1/chat/completions</code> 的服务都行，
+      含本地 Ollama / vLLM。Key 只存在本机 <code>data/llm.json</code>。
+      做语义分析时简历会发给你填的模型服务，介意就别填。</p>
+  </section>
+
+  <section class="filters">
+    <div class="filters-hd"><h3>本地数据</h3></div>
+    <div class="fgrid">
+      <div class="field"><label>岗位库</label><div class="kvs" id="dsJobs">—</div></div>
+      <div class="field"><label>投递记录</label><div class="kvs" id="dsApps">—</div></div>
+      <div class="field"><label>简历版本</label><div class="kvs" id="dsRes">—</div></div>
+      <div class="field"><label>累计采集</label><div class="kvs" id="dsCollect">—</div></div>
+    </div>
+    <div class="row-end">
+      <a class="link" href="/api/export.csv">导出岗位 CSV ↓</a>
+      <a class="link" href="/api/export.tracking.csv">导出台账 CSV ↓</a>
+      <span class="dim">数据都在这台机器上，删掉 data 文件夹即彻底清除</span>
+    </div>
+  </section>
+</main>
+
+<!-- ── 抽屉 ── -->
+<div class="drawer" id="drawerImport" onclick="if(event.target===this)closeDrawer('import')">
+  <div class="sheet">
+    <h3>导入岗位</h3>
+    <p class="hint">从 BOSS / 智联页面复制岗位信息粘贴进来，<b>多个岗位用空行隔开</b>。
+      解析不出来的字段会留空并标注，不会瞎猜。</p>
+    <textarea id="importText" placeholder="Java开发工程师&#10;15-25K·13薪&#10;某某科技有限公司&#10;北京 海淀区 3-5年 本科&#10;负责后端服务开发&#10;&#10;算法工程师（校招）&#10;20-35K&#10;某某网络科技&#10;上海 浦东 应届 硕士"></textarea>
+    <div class="row-end">
+      <button class="btn" onclick="doImport()">解析并入库</button>
+      <button class="btn ghost" onclick="closeDrawer('import')">取消</button>
+      <span class="dim" id="importRes"></span>
+    </div>
+  </div>
+</div>
+
+<div class="drawer" id="drawerCollect" onclick="if(event.target===this)closeDrawer('collect')">
+  <div class="sheet sheet-wide">
+    <h3>让岗位每天自动变多</h3>
+    <p class="hint">
+      需要你登录一次招聘网站（只做一次）。下面三步，跟着点就行，不用敲任何命令。
+    </p>
+
+    <!-- 步骤指示 -->
+    <div class="wiz-steps">
+      <div class="wiz-step" data-s="1"><span class="n">1</span>启动浏览器</div>
+      <div class="wiz-step" data-s="2"><span class="n">2</span>扫码登录</div>
+      <div class="wiz-step" data-s="3"><span class="n">3</span>开始采集</div>
+    </div>
+
+    <div class="wiz-body">
+      <!-- 第 1 步 -->
+      <section class="wiz-pane" id="wz1">
+        <h4>先打开一个专用的浏览器窗口</h4>
+        <p id="wz1desc">
+          点下面的按钮，我们会帮你打开。这个窗口是专门给本工具用的，
+          <b>不会影响你平时用的浏览器</b>。
+        </p>
+        <button class="btn btn-lg" onclick="launchBrowser()">启动浏览器</button>
+        <p class="dim" id="wz1state" style="margin-top:10px"></p>
+      </section>
+
+      <!-- 第 2 步 -->
+      <section class="wiz-pane" id="wz2" hidden>
+        <h4>在弹出的窗口里扫码登录 BOSS 直聘</h4>
+        <p>
+          登录好了就回来点下面的按钮。<br>
+          <span class="dim">只做这一次，以后每天都会自动继续。</span>
+        </p>
+        <button class="btn btn-lg" onclick="checkLogin()">我登录好了</button>
+        <p class="dim" id="wz2state" style="margin-top:10px"></p>
+      </section>
+
+      <!-- 第 3 步 -->
+      <section class="wiz-pane" id="wz3" hidden>
+        <h4>填一下想找什么，然后开始</h4>
+        <div class="fgrid" style="margin-top:12px">
+          <div class="field"><label>关键词</label>
+            <input id="dcKw" placeholder="Java"></div>
+          <div class="field"><label>城市（留空=全国）</label>
+            <input id="dcCity" placeholder="北京"></div>
+          <div class="field"><label>每次翻几页</label>
+            <input id="dcPages" type="number" value="3" min="1" max="10"></div>
+        </div>
+        <p class="dim" style="margin-top:12px">
+          保守模式下采集要几分钟，属正常。跑完之后岗位会自动存下来，明天再看会多一批。
+        </p>
+        <button class="btn btn-lg" onclick="runCollect(true)">开始采集</button>
+        <div id="collectOut" style="margin-top:14px"></div>
+      </section>
+    </div>
+
+    <div class="wiz-foot">
+      <button class="btn ghost sm" onclick="openCollectSettings()">改关键词等设置</button>
+      <button class="btn ghost sm" onclick="closeDrawer('collect')">先关掉</button>
+    </div>
+  </div>
+</div>
+
+<div class="drawer" id="drawerApp" onclick="if(event.target===this)closeDrawer('app')">
+  <div class="sheet"><div id="appDetail"></div></div>
+</div>
+
+<div class="drawer" id="drawerResume" onclick="if(event.target===this)closeDrawer('resume')">
+  <div class="sheet"><div id="resumeDetail"></div></div>
+</div>
+
+<!-- 岗位可信度体检 -->
+<div class="drawer" id="drawerTrust" onclick="if(event.target===this)closeDrawer('trust')">
+  <div class="sheet">
+    <h3>可信度体检</h3>
+    <p class="hint">
+      这个岗位值不值得投之前，先看两件事：薪资能不能信、岗位是不是真的在招人。
+    </p>
+    <div id="trustBody"></div>
+    <div class="sheet-foot"><button class="btn ghost" onclick="closeDrawer('trust')">关掉</button></div>
+  </div>
+</div>
+
+<!-- 面试准备 -->
+<div class="drawer" id="drawerPrep" onclick="if(event.target===this)closeDrawer('prep')">
+  <div class="sheet">
+    <h3>面试准备</h3>
+    <p class="hint">
+      每条回答要点都能在你的简历原文里找到出处。面试官追问你答不上来时，说实话比硬撑安全。
+    </p>
+    <div id="prepBody"></div>
+    <div class="sheet-foot"><button class="btn ghost" onclick="closeDrawer('prep')">关掉</button></div>
+  </div>
+</div>
+
+<!-- 简历定制 / ATS 对齐 -->
+<div class="drawer" id="drawerTailor" onclick="if(event.target===this)closeDrawer('tailor')">
+  <div class="sheet">
+    <h3>简历对齐</h3>
+    <p class="hint">
+      只调整说法和顺序，不会替你新增任何没做过的经历。
+    </p>
+    <div id="tailorBody"></div>
+    <div class="sheet-foot"><button class="btn ghost" onclick="closeDrawer('tailor')">关掉</button></div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="/static/app.js"></script>
+</body>
+</html>

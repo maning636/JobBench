@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><title>Java开发工程师招聘</title></head>
+<body>
+<!-- 这是 BOSS 列表页结构的离线快照，用于 tests/test_boss_parser.py。
+     它不保证与线上完全一致 —— 平台改版后需要更新。
+     注意公司名有职位名同形的情况（历史上"公司名=岗位名"的坑），
+     解析必须取 .company-name 而不是从标题猜。 -->
+<div class="job-list-box">
+
+  <li class="job-card-box">
+    <a class="job-name" href="/job_detail/abc123def.html">Java开发工程师</a>
+    <span class="salary">15-25K·13薪</span>
+    <div class="company-name">北京云启科技有限公司</div>
+    <div class="company-area">北京 海淀区</div>
+    <ul class="tag-list">
+      <li>3-5年</li><li>本科</li><li>计算机</li><li>100-499人</li><li>全职</li>
+    </ul>
+  </li>
+
+  <li class="job-card-box">
+    <a class="job-name" href="/job_detail/xyz789ghi.html">后端开发工程师</a>
+    <span class="salary">12-18K</span>
+    <div class="company-name">上海启明智能科技有限公司</div>
+    <div class="company-area">上海 浦东新区</div>
+    <ul class="tag-list">
+      <li>1-3年</li><li>硕士</li><li>人工智能</li><li>500-999人</li><li>全职</li>
+    </ul>
+  </li>
+
+  <!-- 实习岗：日薪，绝不能被当月薪参与评分 -->
+  <li class="job-card-box">
+    <a class="job-name" href="/job_detail/day001jkl.html">Java开发实习生</a>
+    <span class="salary">200-300元/天</span>
+    <div class="company-name">深圳智联信息技术有限公司</div>
+    <div class="company-area">深圳 南山区</div>
+    <ul class="tag-list">
+      <li>在校/应届</li><li>本科</li><li>计算机</li><li>20-99人</li><li>实习</li>
+    </ul>
+  </li>
+
+  <!-- 面议：不能编造数字 -->
+  <li class="job-card-box">
+    <a class="job-name" href="/job_detail/neg999mno.html">解决方案工程师</a>
+    <span class="salary">面议</span>
+    <div class="company-name">广州卓越实业有限公司</div>
+    <div class="company-area">广州 天河区</div>
+    <ul class="tag-list">
+      <li>经验不限</li><li>本科</li><li>计算机</li><li>20-99人</li><li>全职</li>
+    </ul>
+  </li>
+
+</div>
+</body>
+</html>
