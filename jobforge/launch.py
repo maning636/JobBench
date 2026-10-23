@@ -28,8 +28,46 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 VENV = ROOT / ".venv"
-DEFAULT_PORT = 3399
+
+# 直接 `python jobforge/launch.py` 跑的时候，包本身不在 sys.path 上，
+# 先补上 —— 和 jobforge/web/app.py 一样的做法。
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from jobforge.ports import DEFAULT_PORT, pick_port, port_free  # noqa: E402
+
 START_URL = "http://127.0.0.1:{port}"
+
+
+# --------------------------------------------------------------------------
+# 子进程的输出：解码必须容错
+# --------------------------------------------------------------------------
+
+def _decode(raw) -> str:
+    """把子进程的输出解成人能读懂的字符串。
+
+    ⚠️ 这里**不能**用 ``text=True``。
+    我们是用 ``-X utf8`` 启动的（不然控制台里的中文会乱码），
+    而 UTF-8 模式下 ``io.text_encoding()`` 返回 'utf-8'，
+    pip 在中文 Windows 上输出的是 GBK —— 用 UTF-8 解会抛
+    ``UnicodeDecodeError``。
+
+    更糟的是这个异常是在子进程的**读取线程**里抛的：
+    调用方的 try/except 拦不住，屏幕上会直接打出一段吓人的
+    Python 堆栈，看起来像程序崩了（其实依赖已经装好了）。
+
+    这里按 utf-8 → gbk → 兜底 replace 的顺序试。
+    """
+    if not raw:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    for enc in ("utf-8", "gbk", "mbcs"):
+        try:
+            return raw.decode(enc)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")
 
 
 # --------------------------------------------------------------------------
@@ -83,12 +121,12 @@ def find_python() -> str | None:
     for exe in ("py", "python", "python3"):
         try:
             r = subprocess.run([exe, "-c", "import sys;print(sys.version_info[0])"],
-                               capture_output=True, text=True, timeout=15)
-            if r.returncode == 0 and r.stdout.strip() == "3":
+                               capture_output=True, timeout=15)
+            if r.returncode == 0 and _decode(r.stdout).strip() == "3":
                 # py 启动器需要 -3 才是 python3
                 if exe == "py":
                     r2 = subprocess.run(["py", "-3", "-c", "print(1)"],
-                                        capture_output=True, text=True, timeout=15)
+                                        capture_output=True, timeout=15)
                     if r2.returncode == 0:
                         return "py -3"
                 return exe
@@ -114,12 +152,12 @@ def _missing_modules(py: str) -> list[str]:
     )
     try:
         r = subprocess.run(_split(py) + ["-c", probe],
-                           capture_output=True, text=True, timeout=60)
+                           capture_output=True, timeout=60)
     except (FileNotFoundError, subprocess.SubprocessError, OSError):
         return list(REQUIRED_MODULES)
     if r.returncode != 0:
         return list(REQUIRED_MODULES)
-    out = (r.stdout or "").strip().splitlines()
+    out = _decode(r.stdout).strip().splitlines()
     line = out[-1].strip() if out else ""
     return [m for m in line.split(",") if m]
 
@@ -138,9 +176,9 @@ def ensure_deps(py: str) -> bool:
         try:
             r = subprocess.run(_split(py) + ["-m", "pip", "install", "-q",
                                              "-r", str(ROOT / "requirements.txt")],
-                               capture_output=True, text=True, timeout=600)
+                               capture_output=True, timeout=600)
             if r.returncode != 0:
-                say(f"安装时的报错：{(r.stderr or r.stdout or '')[-400:]}")
+                say(f"安装时的报错：{(_decode(r.stderr) or _decode(r.stdout))[-400:]}")
                 die("组件没能装好，通常是网络问题。换个网络再双击一次这个文件试试。")
         except subprocess.TimeoutExpired:
             die("下载太慢超时了。换个网络，或者过一会儿再双击一次这个文件。")
@@ -158,8 +196,10 @@ def ensure_deps(py: str) -> bool:
     try:
         subprocess.run(_split(py) + ["-m", "venv", str(VENV)],
                        check=True, capture_output=True, timeout=180)
-    except (subprocess.CalledProcessError, subprocess.SubprocessError, OSError) as e:
-        die(f"准备运行环境失败：{getattr(e, 'stderr', '') or e}")
+    except subprocess.CalledProcessError as e:
+        die(f"准备运行环境失败：{(_decode(e.stderr) or _decode(e.stdout))[-400:]}")
+    except (subprocess.SubprocessError, OSError) as e:
+        die(f"准备运行环境失败：{e}")
 
     vp = find_python()
     if not vp:
@@ -169,9 +209,9 @@ def ensure_deps(py: str) -> bool:
     try:
         r = subprocess.run(_split(vp) + ["-m", "pip", "install", "-q",
                                          "-r", str(ROOT / "requirements.txt")],
-                           capture_output=True, text=True, timeout=600)
+                           capture_output=True, timeout=600)
         if r.returncode != 0:
-            say(f"安装时的报错：{(r.stderr or r.stdout or '')[-400:]}")
+            say(f"安装时的报错：{(_decode(r.stderr) or _decode(r.stdout))[-400:]}")
             die("组件没能装好，通常是网络问题。换个网络再双击一次这个文件试试。")
     except subprocess.TimeoutExpired:
         die("下载太慢超时了。换个网络，或者过一会儿再双击一次这个文件。")
@@ -195,27 +235,21 @@ def _split(py: str) -> list[str]:
 
 # --------------------------------------------------------------------------
 # 端口：被占了就换一个，别让用户自己查
+#
+# 实现在 jobforge/ports.py —— 判断「空闲」必须真的 bind 一次，
+# connect_ex 会把 Windows 的保留端口误判成空闲。
+# 这里 import 进来只是为了调用点写着方便。
 # --------------------------------------------------------------------------
-
-def port_free(port: int) -> bool:
-    import socket
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(1.0)
-        return s.connect_ex(("127.0.0.1", port)) != 0
-
-
-def pick_port(start: int) -> int:
-    port = start
-    for _ in range(20):
-        if port_free(port):
-            return port
-        port += 1
-    return port
 
 
 # --------------------------------------------------------------------------
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    """启动器主入口。
+
+    argv 可以传参（jobforge.desktop 的自举路径会这么用）；
+    不传就读命令行上的参数。两种入口走的是同一套逻辑。
+    """
     _fix_console()
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
@@ -223,7 +257,7 @@ def main() -> int:
     ap.add_argument("--desktop", action="store_true",
                     help="用独立的应用窗口打开，不开浏览器")
     ap.add_argument("--check", action="store_true", help="只自检，不常驻")
-    args, _ = ap.parse_known_args()
+    args, _ = ap.parse_known_args(argv)
 
     say()
     say("  求职工作台")
@@ -241,18 +275,42 @@ def main() -> int:
 
     port = pick_port(args.port)
     if port != args.port:
-        say(f"（{args.port} 端口被别的程序占着了，这次改用 {port}）")
+        # 「被别的程序占着」和「被 Windows 保留」都会走到这里，
+        # 所以别把话说死 —— 用户不需要知道到底是哪一种。
+        say(f"（{args.port} 这个端口用不了，这次改用 {port}）")
 
     db = ROOT / "data" / "jobforge.db"
 
-    # 桌面模式：开一个独立的应用窗口，用户不用碰浏览器、也不用记端口
+    # 桌面模式：开一个独立的应用窗口，用户不用碰浏览器、也不用记端口。
+    #
+    # ⚠️ 必须用**子进程**跑，不能在当前进程里跑：
+    # ensure_deps() 在缺依赖时会新建 .venv 并把包装进去 ——
+    # 那当前解释器还是没有 flask，直接在进程里跑会 ImportError。
+    # 网页模式没这个问题是因为它本来就是用子进程起 web.app 的。
+    # 这里保持一致：用 ensure_deps 之后解析出来的那个解释器去起。
     if args.desktop:
-        from jobforge.desktop import run_desktop
+        py2 = find_python() or py
+        cmd = _split(py2) + ["-X", "utf8", "-m", "jobforge.desktop",
+                            "--port", str(port), "--db", str(db)]
         say("正在启动桌面版…")
+        env = dict(os.environ, JOBFORGE_NO_RELOAD="1")
         try:
-            return run_desktop(db_path=str(db), port=port)
+            proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env)
+        except OSError as e:
+            die(f"启动失败：{e}")
+            return 1
+        try:
+            proc.wait()
         except KeyboardInterrupt:
-            return 0
+            pass
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+        return proc.returncode or 0
 
     cmd = _split(py) + ["-X", "utf8", "-m", "jobforge.web.app",
                         "--port", str(port), "--db", str(db)]

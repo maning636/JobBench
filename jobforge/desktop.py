@@ -32,7 +32,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import socket
 import subprocess
 import sys
 import threading
@@ -44,9 +43,11 @@ from pathlib import Path
 from typing import Optional, Tuple
 
 from jobforge import _PROJECT_ROOT
+from jobforge.ports import DEFAULT_PORT as _PORTS_DEFAULT_PORT
+from jobforge.ports import pick_port, port_free
 
 APP_TITLE = "求职工作台"
-DEFAULT_PORT = 3399
+DEFAULT_PORT = _PORTS_DEFAULT_PORT
 # 窗口尺寸（逻辑像素）。1250 这个宽度是量出来的：
 # 界面 .wrap 的 max-width 是 1120px，900px 以下会切成竖排布局，
 # 1250 宽能保证横向布局不挤，同时在 1366×768 的老笔记本上也放得下。
@@ -58,36 +59,34 @@ BOOT_TIMEOUT = 20.0
 # --------------------------------------------------------------------------
 # 端口
 # --------------------------------------------------------------------------
-
-def port_free(port: int) -> bool:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(1.0)
-        return s.connect_ex(("127.0.0.1", port)) != 0
-
-
-def pick_port(start: int = DEFAULT_PORT, tries: int = 20) -> int:
-    """找一个没人占的端口。端口被占不是错误，换一个继续。"""
-    port = start
-    for _ in range(tries):
-        if port_free(port):
-            return port
-        port += 1
-    return port
+#
+# port_free / pick_port 在 jobforge.ports 里 —— 判断「空闲」必须真的 bind
+# 一次，不能用 connect_ex（Windows 保留端口会被误判成空闲）。
+# 这里保留这两个名字，是为了让模块内外的调用点都还能直接用。
 
 
 # --------------------------------------------------------------------------
 # 后端服务
 # --------------------------------------------------------------------------
 
-def serve_in_thread(app, port: int) -> Tuple[object, threading.Thread]:
+def serve_in_thread(app, port: int, tries: int = 256) -> Tuple[object, threading.Thread]:
     """在后台线程里跑 Flask，返回 (server, thread)。
 
     用 werkzeug 的 make_server 而不是 app.run()：
     app.run() 没有 shutdown()，窗口一关后台就变成孤儿线程，
     端口还占着，下次启动就得换端口。
+
+    端口绑不上就自动往后找一个 —— 绑不上是常事，不是错误。
+    （Windows 会保留上百个端口给 Hyper-V / WSL，那种端口
+      connect 是连不上的，看起来像空闲，bind 却会报 errno 13；
+      而 werkzeug 自己 bind 失败时会 sys.exit(1) 直接把进程带走，
+      所以这里走 jobforge.server，自己 bind 好再把 fd 交给它。）
+
+    实际用上的端口从 server.server_port 读，不要拿传进来的 port 当真。
     """
-    from werkzeug.serving import make_server
-    server = make_server("127.0.0.1", port, app, threaded=True)
+    from jobforge.server import make_server_on
+
+    server, _port = make_server_on("127.0.0.1", port, app, tries=tries)
     thread = threading.Thread(target=server.serve_forever,
                               name="jobforge-http", daemon=True)
     thread.start()
@@ -178,7 +177,11 @@ def run_desktop(db_path: Optional[str] = None,
     app = create_app(db)
 
     server, _thread = serve_in_thread(app, port)
-    url = "http://127.0.0.1:%d" % port
+    # 用服务实际绑上的端口，不要用传进来的那个 ——
+    # 中间可能因为端口被占而自动往后挪过。
+    from jobforge.server import server_port
+    actual = server_port(server, port)
+    url = "http://127.0.0.1:%d" % actual
 
     try:
         if not wait_for_server(url):
@@ -216,11 +219,29 @@ def run_desktop(db_path: Optional[str] = None,
 
 # --------------------------------------------------------------------------
 
+def missing_modules() -> list[str]:
+    """运行时还缺哪些依赖。
+
+    和 launch.py 的 REQUIRED_MODULES 保持一致 —— 少探一个，
+    等用户点「立即采集」才崩，那时他已经不信任这个程序了。
+    """
+    import importlib.util
+    mods = ("flask", "bs4", "websockets")
+    return [m for m in mods if importlib.util.find_spec(m) is None]
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     ap = argparse.ArgumentParser(description="求职工作台 桌面版")
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--db", default=str(_PROJECT_ROOT / "data" / "jobforge.db"))
     args = ap.parse_args(argv)
+
+    # 直接 `python -m jobforge.desktop` 跑的时候，依赖可能还没装。
+    # 交给 launch 走一遍自举 —— 它会建虚拟环境、pip install、
+    # 并用人话告诉用户到底缺什么（而不是甩一段 ImportError 堆栈）。
+    if missing_modules():
+        from jobforge.launch import main as launch_main
+        return launch_main(["--desktop", "--port", str(args.port)])
 
     try:
         return run_desktop(db_path=args.db, port=args.port)

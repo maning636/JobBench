@@ -1,5 +1,7 @@
 # 求职工作台
 
+[![CI](https://github.com/maning636/JobBench/actions/workflows/ci.yml/badge.svg)](https://github.com/maning636/JobBench/actions/workflows/ci.yml)
+
 > 每天自动帮你把该投的岗位挑出来。
 
 面向大学生 / 应届生 / 刚找工作的人。**数据全部留在本地**，不上传任何服务器。
@@ -65,6 +67,15 @@
 
 > 卡在哪一步了？把弹出的黑窗口里的字截图发给帮你的人就行。
 
+**双击了没反应？** 按顺序试：
+
+1. 等 1-2 分钟再点 —— 第一次运行在装依赖，要联网。
+2. 看有没有弹出黑色命令行窗口，里面写的什么。**有报错的话把那几行截图下来**，
+   那是唯一有用的信息。
+3. 确认装过 Python，且安装时第一屏勾了 **Add Python to PATH**。
+4. 还是不行：把整个文件夹移到桌面（**不要放在 OneDrive 同步的目录里**）再试 ——
+   有人的桌面被 OneDrive 同步到云端，本地数据目录写不进去。
+
 ### 方式二：克隆仓库自己跑
 
 ```bash
@@ -83,6 +94,27 @@ python -m jobforge.desktop         # → 独立应用窗口
 桌面版长这样（就是一个独立窗口，没有地址栏、没有标签栏）：
 
 ![求职工作台桌面版](docs/screenshot-desktop.png)
+
+### 三十秒确认这份代码还能跑
+
+不管你是 clone 下来的还是自己改过的，先跑这一条：
+
+```bash
+pip install -r requirements.txt
+python -m jobforge.cli test          # 750 项，全绿才算好
+```
+
+`jobforge.cli test` 里带**漏跑检测** —— `tests/` 下新增了测试文件却没注册进
+测试列表，它会直接判失败。这样「加测试忘了挂上」不会静默发生。
+
+改完代码想确认桌面窗口没坏：
+
+```bash
+python -m jobforge.desktop
+```
+
+第一次运行它会自己装依赖、建虚拟环境，并用中文告诉你卡在哪一步
+（不会甩一堆英文堆栈给你）。
 
 ### 想先看看效果（不用登录任何网站）
 
@@ -285,6 +317,8 @@ jobforge/
 ├─ runtime/             飞书推送 + 每日调度
 ├─ web/                 Flask 薄壳（无业务逻辑）
 ├─ desktop.py           桌面客户端外壳（独立应用窗口）
+├─ ports.py             端口选择（空闲必须真的 bind 一次）
+├─ server.py            起本地服务（端口用不了就自动换一个）
 └─ cli.py               命令行
 ```
 
@@ -296,7 +330,7 @@ jobforge/
 python -m jobforge.cli test
 ```
 
-738 项，其中 BOSS 与智联的解析层都是**离线 fixture 测试**（不碰网络）。
+750 项，其中 BOSS 与智联的解析层都是**离线 fixture 测试**（不碰网络）。
 浏览器会话那部分需要真实登录态，**不在测试范围内**，
 所以请用 `collect --check` 先做连通性自检。
 

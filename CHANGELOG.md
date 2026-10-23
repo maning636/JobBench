@@ -38,6 +38,52 @@ DPI 是浏览器自己算的，稳定。附带好处：**不用装任何额外�
    放得下短标题。
 3. **`launch.py` 加了 `--desktop`**：`启动.bat --desktop` 等价于桌面版。
 
+### 首次运行的三个真 bug（这一节是重点）
+
+桌面版的价值全在「双击就能用」，所以**在全新机器上**（没装依赖、没建过 venv）
+走一遍自举是必做功课。跑完发现三处会导致「双击了没反应」的问题，
+全部修掉了：
+
+1. **缺依赖时转交启动器的那一步直接崩了**。
+   `jobforge.desktop` 发现依赖没装齐，会把活转交给 `jobforge.launch`
+   去建虚拟环境、装依赖 —— 但 `launch.main()` 当时不接参数，
+   于是 `TypeError: main() takes 0 positional arguments but 1 was given`，
+   **崩在装依赖之前**，`.venv` 根本没建出来。
+   修法：`launch.main()` 改成接 `argv`。
+
+2. **pip 的中文报错把整个安装过程搞崩了**。
+   我们用 `-X utf8` 启动（不然控制台中文乱码），而 UTF-8 模式下
+   `io.text_encoding()` 返回 `'utf-8'`；pip 在中文 Windows 上输出的是 **GBK**，
+   用 UTF-8 解就抛 `UnicodeDecodeError`。
+   更糟的是这个异常是在子进程的**读取线程**里抛的 —— 调用方的
+   `try/except` 拦不住，屏幕上直接打出一段吓人的 Python 堆栈，
+   看起来像程序崩了（其实依赖已经装好了）。
+   修法：子进程输出按 `utf-8 → gbk → 兜底 replace` 的顺序容错解码。
+
+3. **端口挑到「Windows 保留端口」时，进程会直接消失**。
+   两层问题叠在一起：
+
+   - 判断「端口空闲」用的是 `connect_ex`（连一下看看通不通）。
+     但 Windows 会保留一批端口给 Hyper-V / WSL / Docker
+     （`netsh interface ipv4 show excludedportrange protocol=tcp`），
+     这种端口 connect 是连不上的、看着像空闲，**bind 却会被拒绝**。
+     本机实测 **3469-3668 连成 200 个端口一个都绑不上**。
+   - 更要命的是 werkzeug：端口绑不上时它不抛异常，而是
+     `print(e.strerror)` 然后 **`sys.exit(1)`**。
+     `SystemExit` 不是 `OSError`，`except OSError` 拦不住 ——
+     进程直接没了，屏幕上只剩一句
+     「以一种访问权限不允许的方式做了一个访问套接字的尝试。」
+
+   修法：新增 `jobforge/ports.py`（判断空闲一律**真的 bind 一次**，
+   往后找 256 个端口，再不行让操作系统自己挑）和 `jobforge/server.py`
+   （自己 bind 好再把 fd 交给 werkzeug，它就不再去 bind，也就不会 `sys.exit`）。
+   桌面版和网页版现在都走这条路，端口用不了会**自动换一个**，
+   而不是让用户面对一句看不懂的报错。
+
+   顺带说明：判断空闲时**故意不设** `SO_REUSEADDR` ——
+   Windows 上两边都设了这个选项就能抢同一个端口，
+   设了反而会挑到「另一个正在跑的服务」的端口上去。
+
 ### 一个容易踩的坑：界面和采集必须分开
 
 界面窗口和采集浏览器是**两个独立进程**：
@@ -58,8 +104,13 @@ DPI 是浏览器自己算的，稳定。附带好处：**不用装任何额外�
 
 - 实测：桌面窗口正常渲染（标题、图标、导航、三个数据卡、每条待办的「处理」按钮全在）
 - 实测：关掉窗口 → Chrome 退出 → 后台 Python 进程干净退出，端口不残留
-- 新增 `tests/test_desktop.py`（22 项）：端口避让 / 资料目录隔离 / 启动参数 / favicon / 不依赖 pywebview
-- 全量测试 **738 项全绿**（原 716 项 + 新增 22 项）
+- 实测**全新机器自举**：空 venv（三个依赖全缺）里跑 `python -m jobforge.desktop`，
+  自动建 `.venv`、装依赖、避开 Windows 保留端口（3470 → 3669）、
+  开出窗口，页面资源全部 200 —— 全程没有任何堆栈输出
+- 新增 `tests/test_desktop.py`（34 项）：端口避让 / 资料目录隔离 / 启动参数 /
+  favicon / 不依赖 pywebview / 首次运行转交路径 / 端口必须 bind 判定 /
+  服务端口被占要自动换 / 子进程输出容错解码
+- 全量测试 **750 项全绿**（原 716 项 + 新增 34 项）
 
 ### 还没做的
 

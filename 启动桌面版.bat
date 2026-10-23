@@ -2,6 +2,10 @@
 REM ============================================================
 REM  Desktop launcher - double-click this file.
 REM  Opens a standalone app window (no address bar, no tabs).
+REM  Goes through jobforge.launch --desktop on purpose: that entry
+REM  point installs missing dependencies on first run and prints
+REM  human-readable errors. Calling jobforge.desktop directly would
+REM  raise a raw ImportError on a machine without Flask.
 REM  Keep this file ASCII-only: Windows cmd's codepage will
 REM  mangle Chinese text here. All user-facing messages are
 REM  printed by Python instead (see jobforge/desktop.py).
@@ -36,7 +40,7 @@ if not defined PY (
   exit /b 1
 )
 
-%PY% -X utf8 -m jobforge.desktop %*
+%PY% -X utf8 -m jobforge.launch --desktop %*
 set "RC=%ERRORLEVEL%"
 if not "%RC%"=="0" (
   echo.

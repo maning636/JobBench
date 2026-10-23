@@ -978,4 +978,19 @@ if __name__ == "__main__":
     p.add_argument("--port", type=int, default=8080)
     p.add_argument("--db", default=DEFAULT_DB)
     a = p.parse_args()
-    create_app(a.db).run(host="127.0.0.1", port=a.port, debug=False, threaded=True)
+
+    # 不用 app.run()：它内部还是 werkzeug 的 make_server，
+    # 端口绑不上时会 print 一句看不懂的 socket 报错然后 sys.exit(1)，
+    # 进程直接消失。这里走 jobforge.server，自己 bind，
+    # 绑不上就自动换一个端口。
+    from jobforge.server import make_server_on
+
+    _app = create_app(a.db)
+    _server, _port = make_server_on("127.0.0.1", a.port, _app)
+    print("求职工作台已启动：http://127.0.0.1:%d" % _port, flush=True)
+    try:
+        _server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        _server.server_close()

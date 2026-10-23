@@ -16,6 +16,9 @@
    pywebview 的 WinForms 后端算窗口尺寸是「看运气」的（`GetDpiForWindow`
    在窗口没上屏前返回系统 DPI），WebView2 控件还会比窗体宽，
    右半边落在窗口外面。浏览器自己的 `--app` 窗口没这个问题。
+5. **新机器第一次运行的转交路径不能断** —— 缺依赖时桌面版要把活
+   转交给启动器去自举（建 .venv、装依赖）。这条路径只在全新机器上
+   才会走到，本地开发期永远走不到，所以必须用测试钉死。
 """
 from __future__ import annotations
 
@@ -30,6 +33,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from jobforge import desktop as D                        # noqa: E402
+from jobforge import launch as L                         # noqa: E402
 from jobforge.application import browser_launcher as BL   # noqa: E402
 
 P, F = [], []
@@ -38,6 +42,19 @@ P, F = [], []
 def check(n, c, d=""):
     (P if c else F).append(n)
     print(f"  {'PASS' if c else 'FAIL'}  {n}" + (f"  ← {d}" if d and not c else ""))
+
+
+def _connect_refused(port: int) -> bool:
+    """连不上这个端口吗？（用来证明「connect 判断」会误判）"""
+    c = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    c.settimeout(2)
+    try:
+        c.connect(("127.0.0.1", port))
+        return False
+    except OSError:
+        return True
+    finally:
+        c.close()
 
 
 # =============================================================================
@@ -184,6 +201,103 @@ req = (ROOT / "requirements.txt").read_text(encoding="utf-8")
 check("requirements 里没有 pywebview", "pywebview" not in req)
 check("requirements 里没有 pythonnet（它会让安装变重）",
       "pythonnet" not in req.lower() and "clr" not in req.lower().split("\n"))
+
+# =============================================================================
+print("\n--- 端口判断必须是 bind，不能是 connect ---")
+# =============================================================================
+#
+# 用「连一下看看通不通」判断空闲，会漏掉两类端口：
+#
+#   1. Windows 保留给 Hyper-V / WSL 的端口 —— connect 连不上，
+#      看起来像空闲，bind 却报 errno 13。本机实测 3469-3668
+#      连成 200 个端口一个都绑不上。
+#   2. 已经被 bind 但没 listen 的端口 —— connect 会被拒绝
+#      （Connection refused），也看起来像空闲。
+#
+# 第 2 种可以在任何机器上稳定复现，所以下面用它当判据。
+
+_bound_only = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    _bound_only.bind(("127.0.0.1", 0))       # 占住，但**不** listen
+    _bound_only_port = _bound_only.getsockname()[1]
+    check("只 bind 不 listen 的端口，connect 会失败（看起来像空闲）",
+          _connect_refused(_bound_only_port))
+    check("但它必须被判成「占用」（bind 才是权威）",
+          D.port_free(_bound_only_port) is False,
+          f"port={_bound_only_port}")
+    _skipped = D.pick_port(_bound_only_port, tries=5)
+    check("启动器会跳过它", _skipped != _bound_only_port,
+          f"占着 {_bound_only_port}，选了 {_skipped}")
+finally:
+    _bound_only.close()
+
+# 服务起不来时必须自动换一个端口，而不是崩掉
+_held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    _held.bind(("127.0.0.1", 0))
+    _held.listen(1)
+    _held_port = _held.getsockname()[1]
+    _srv, _th = D.serve_in_thread(MiniApp(), _held_port, tries=5)
+    try:
+        from jobforge.server import server_port
+        _real = server_port(_srv, None)
+        check("端口被占时，服务自动换到别的端口上去了",
+              _real is not None and _real != _held_port,
+              f"占着 {_held_port}，实际用了 {_real}")
+        check("换端口之后服务照样能用",
+              D.wait_for_server("http://127.0.0.1:%d" % _real, timeout=10))
+    finally:
+        _srv.shutdown()
+finally:
+    _held.close()
+
+# 子进程输出的解码必须容错（pip 在中文 Windows 上输出的是 GBK）
+check("GBK 字节能被正确解码",
+      L._decode("中文错误".encode("gbk")) == "中文错误")
+check("UTF-8 字节能被正确解码",
+      L._decode("中文错误".encode("utf-8")) == "中文错误")
+check("解码不出来时也不会抛异常",
+      L._decode(b"\xff\xfe\x00garbage") != "")
+
+# =============================================================================
+print("\n--- 新机器第一次运行的转交路径 ---")
+# =============================================================================
+#
+# 这里曾经断过一次：`jobforge.desktop` 缺依赖时会把活转交给
+# `jobforge.launch` 去自举（建 .venv、pip install），但 launch 的 main()
+# 当时不接参数，于是直接 TypeError —— 崩在**装依赖之前**，
+# 新机器上表现为「双击了没反应，连 venv 都没建出来」。
+# 这条路径只有在新机器上才会走到，本地开发期永远走不到。
+
+import inspect                                        # noqa: E402
+
+sig = inspect.signature(L.main)
+check("启动器 main() 能接 argv（自举时要靠它传参）",
+      "argv" in sig.parameters, str(sig))
+
+recorded = {}
+
+
+def fake_launch_main(argv=None):
+    recorded["argv"] = argv
+    return 0
+
+
+old_missing = D.missing_modules
+old_launch_main = L.main
+D.missing_modules = lambda: ["flask"]
+L.main = fake_launch_main
+try:
+    rc = D.main(["--port", "4321"])
+finally:
+    D.missing_modules = old_missing
+    L.main = old_launch_main
+
+check("缺依赖时桌面版把活转交给启动器", recorded.get("argv") is not None, str(recorded))
+check("转交时带上了 --desktop 和端口",
+      recorded.get("argv") == ["--desktop", "--port", "4321"],
+      str(recorded.get("argv")))
+check("转交不影响退出码", rc == 0, str(rc))
 
 # =============================================================================
 print("\n" + "=" * 60)

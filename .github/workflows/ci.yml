@@ -1,0 +1,37 @@
+name: CI
+
+# 每次推 master、每个 PR 都跑一遍全量测试。
+# 这个仓库是 MIT 开放的，别人会 fork 去改 —— CI 是他们判断
+# 「这份代码还是好的吗」最省事的依据，所以它必须绿。
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # 只跑 Windows：本项目的交付形态是 Windows 桌面客户端
+    # （--app 窗口、%LOCALAPPDATA% 资料目录、启动.bat）。
+    runs-on: windows-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run test suite
+        # cmd_test 里有「漏跑检测」：tests/ 下新增测试文件却没注册进去，
+        # 会直接判失败。所以这一条命令既是测试，也是防静默倒退的闸门。
+        run: python -X utf8 -m jobforge.cli test
