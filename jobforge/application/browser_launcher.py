@@ -273,21 +273,85 @@ def get_status(source: str = "boss") -> BrowserStatus:
 # 启动
 # =============================================================================
 
+# =============================================================================
+# 打开平台登录页
+# =============================================================================
+
+def platform_config(source: str = "boss") -> Dict[str, Any]:
+    """取某个平台的配置（登录页、判据、是否必须登录）。"""
+    return PLATFORMS.get((source or "boss").strip().lower(), PLATFORMS["boss"])
+
+
+def open_platform_page(source: str = "boss") -> Dict[str, Any]:
+    """在专用浏览器里打开某个平台的登录页（新标签页）。
+
+    **为什么必须有这个函数**：专用浏览器是**两个平台共用**的（一个 profile）。
+    用户先用 BOSS，浏览器就一直在跑；之后把平台切到智联，
+    智联的登录页**从来没被打开过** —— 没有这个函数，
+    用户只能自己在浏览器里手敲网址。
+
+    这也正是「切换平台后第一次采集」会走到的路径
+    （智联标签页不存在 → 需要新建标签页）。
+
+    浏览器没在跑的话，先把它拉起来。
+    """
+    p = platform_config(source)
+    url = p["login_url"]
+
+    if not cdp_alive():
+        r = launch(source=source)
+        if not r.get("ok"):
+            return {"ok": False, "source": source, "name": p["name"],
+                    "message": r.get("message") or "浏览器启动失败"}
+
+    try:
+        from jobforge.adapters.sources.browser import BrowserSession
+        b = BrowserSession(host=CDP_HOST, port=DEBUG_PORT)
+        tab = b.new_tab(url)
+        return {"ok": True, "source": source, "name": p["name"],
+                "opened": url, "tab_id": tab.get("id"),
+                "message": f"已在专用浏览器里打开{p['name']}的页面"}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "source": source, "name": p["name"],
+                "message": f"打开{p['name']}页面失败：{e}"}
+
+
+# =============================================================================
+# 启动
+# =============================================================================
+
 def launch(host: str = CDP_HOST, port: int = DEBUG_PORT,
            open_login_page: bool = True, source: str = "boss") -> Dict[str, Any]:
     """拉起带调试端口的浏览器。
 
     先检查是不是已经在跑 —— 重复启动会开出第二个窗口，
     用户会以为程序疯了（实测这是最容易被当成 bug 的行为）。
+
+    ⚠ 已经在跑的时候**不能只是说「已经在运行了」**就完事 ——
+    浏览器是 BOSS 和智联共用的，用户很可能是在 BOSS 用完之后
+    才切到智联，这时智联的登录页从没被打开过。
+    所以这里照样把所选平台的登录页开出来（新标签页）。
     """
     if cdp_alive(host, port):
-        st = get_status()
-        return {"ok": True, "already_running": True, **st.to_dict(),
-                "message": "浏览器已经在运行了，不用重复启动"}
+        opened = False
+        if open_login_page:
+            try:
+                from jobforge.adapters.sources.browser import BrowserSession
+                BrowserSession(host=host, port=port).new_tab(
+                    platform_config(source)["login_url"])
+                opened = True
+            except Exception:  # noqa: BLE001
+                opened = False
+        st = get_status(source=source)
+        return {"ok": True, "already_running": True,
+                "opened_login_page": opened,
+                **st.to_dict(),
+                "message": ("浏览器已经在运行了，已帮你打开登录页"
+                            if opened else "浏览器已经在运行了，不用重复启动")}
 
     path = find_browser()
     if not path:
-        return {"ok": False, **get_status().to_dict()}
+        return {"ok": False, **get_status(source=source).to_dict()}
 
     ud = user_data_dir()
     args = [
@@ -300,8 +364,7 @@ def launch(host: str = CDP_HOST, port: int = DEBUG_PORT,
         "--no-default-browser-check",
     ]
     if open_login_page:
-        args.append(PLATFORMS.get((source or "boss").strip().lower(),
-                                  PLATFORMS["boss"])["login_url"])
+        args.append(platform_config(source)["login_url"])
 
     try:
         if platform.system() == "Windows":
@@ -314,7 +377,7 @@ def launch(host: str = CDP_HOST, port: int = DEBUG_PORT,
             subprocess.Popen(args, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL, start_new_session=True)
     except Exception as e:  # noqa: BLE001
-        return {"ok": False, **get_status().to_dict(),
+        return {"ok": False, **get_status(source=source).to_dict(),
                 "message": f"启动失败：{e}"}
 
     # 等它把调试端口开起来，最多 12 秒
@@ -322,11 +385,11 @@ def launch(host: str = CDP_HOST, port: int = DEBUG_PORT,
     for _ in range(24):
         time.sleep(0.5)
         if cdp_alive(host, port):
-            st = get_status()
+            st = get_status(source=source)
             return {"ok": True, "already_running": False, **st.to_dict(),
                     "message": "浏览器已启动，接下来在里面扫码登录"}
 
-    return {"ok": False, **get_status().to_dict(),
+    return {"ok": False, **get_status(source=source).to_dict(),
             "message": ("浏览器启动了，但没连上。"
                         "可能已经有别的程序占用这个端口，"
                         "或者系统拦住了，请稍后再试一次")}

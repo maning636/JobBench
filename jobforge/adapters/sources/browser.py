@@ -110,10 +110,20 @@ class BrowserSession:
         return None
 
     def new_tab(self, url: str = "about:blank") -> Dict[str, Any]:
+        """新建标签页，返回它的 target 信息。
+
+        ⚠ Chrome 111+ 的 `/json/new` **只接受 PUT** ——
+        GET 和 POST 一律 405 Method Not Allowed。
+        之前这里用 `data=b""`（等价于 POST），在现代 Chrome 上必挂，
+        而这条路径正是「切换平台后第一次采集」要走的
+        （浏览器是 BOSS 和智联共用的，切到智联时智联标签页还不存在）。
+
+        实测：POST → 405，PUT → 200。
+        """
         try:
-            with urllib.request.urlopen(
-                f"{self.base}/json/new?{url}", timeout=10, data=b""
-            ) as r:
+            req = urllib.request.Request(
+                f"{self.base}/json/new?{url}", method="PUT")
+            with urllib.request.urlopen(req, timeout=10) as r:
                 return json.loads(r.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             raise BrowserError(f"新建标签页失败 HTTP {e.code}：{e.reason}") from e

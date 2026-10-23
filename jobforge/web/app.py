@@ -676,6 +676,19 @@ def create_app(db_path: str = DEFAULT_DB, store: Optional[Store] = None) -> Flas
         r = bl.launch(source=src)
         return jsonify({"ok": bool(r.get("ok")), **r})
 
+    @app.post("/api/collect/open-login")
+    def collect_open_login():
+        """在专用浏览器里打开某个平台的页面（新标签页）。
+
+        浏览器是 BOSS 和智联**共用**的：用户很可能先用完 BOSS 才切到智联，
+        这时智联的登录页从没被打开过 —— 没有这个接口，用户只能自己敲网址。
+        """
+        from jobforge.application import browser_launcher as bl
+        body = request.get_json(silent=True) or {}
+        src = (body.get("source") or "boss").strip().lower()
+        r = bl.open_platform_page(src)
+        return jsonify({"ok": bool(r.get("ok")), **r})
+
     @app.post("/api/collect/check")
     def collect_check():
         from jobforge.application import browser_launcher as bl

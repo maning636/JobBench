@@ -1214,6 +1214,14 @@ const SRC_INFO = {
   },
 };
 
+/* 支持的平台。**两个平台的页面都能单独打开** ——
+   专用浏览器是共用的（一个 profile）：用户很可能先用完 BOSS 才切到智联，
+   这时智联的页面不会自己出现，没有按钮的话用户只能自己敲网址。 */
+const PLATFORM_LIST = [
+  {id: 'boss', name: 'BOSS 直聘'},
+  {id: 'zhaopin', name: '智联招聘'},
+];
+
 function applySourceText(){
   const info = SRC_INFO[WIZ.source] || SRC_INFO.boss;
   const t = $('#wz2title'); if(t) t.innerHTML = esc(info.loginTitle);
@@ -1221,6 +1229,41 @@ function applySourceText(){
   const n = $('#srcNote');  if(n) n.innerHTML = esc(info.note);
   const st = document.querySelector('.wiz-step[data-s="2"]');
   if(st) st.innerHTML = '<span class="n">2</span>' + esc(info.stepLabel);
+  // 确认按钮必须写清查的是哪个平台 —— 用户可能刚打开了另一个平台的页面，
+  // 这时候点「我登录好了」，查的却是下拉里选的那个，会被误报成「没检测到登录」。
+  const cf = $('#wz2confirm');
+  if(cf) cf.textContent = '确认 ' + info.name + ' 登录好了';
+  renderPlatformLinks();
+}
+
+/* 渲染「打开哪个平台的页面」的两个按钮。当前平台那个按钮不灰，
+   另一个照样能点 —— 用户可能想两个都登录。 */
+function renderPlatformLinks(){
+  const box = $('#wz2links');
+  if(!box) return;
+  const cur = WIZ.source;
+  let html = '<div class="dim" style="margin:0 0 8px">'
+           + '两个平台用的是同一个浏览器窗口，要登录哪个就点哪个：</div>';
+  for(const p of PLATFORM_LIST){
+    const on = (p.id === cur);
+    html += '<button class="btn' + (on ? '' : ' ghost') + '" '
+          + 'style="margin:0 8px 8px 0" '
+          + 'onclick="openLoginPage(\'' + p.id + '\')">'
+          + '打开 ' + esc(p.name) + ' 页面</button>';
+  }
+  box.innerHTML = html;
+}
+
+/* 在专用浏览器里打开某个平台的页面（新标签页）。 */
+async function openLoginPage(src){
+  const info = SRC_INFO[src] || SRC_INFO.boss;
+  wizState('正在打开 ' + info.name + ' 的页面…');
+  const r = await post('/api/collect/open-login', {source: src});
+  if(r.ok){
+    wizState('已打开 ' + info.name + ' 的页面。登录好了就回来点下面的按钮。', 'ok');
+  } else {
+    wizState(r.message || '打开失败，请稍后再试一次', 'err');
+  }
 }
 
 /* 换平台：换文案 + 重新问后端状态。
@@ -1340,12 +1383,16 @@ async function launchBrowser(){
 }
 
 async function checkLogin(){
-  const btn = $('#wz2 .btn');
-  btn.disabled = true; btn.textContent = '正在检查…';
+  // 必须按 id 取按钮：第 2 步现在有好几个按钮（两个平台按钮 + 确认按钮），
+  // 按「第 2 步第一个 .btn」取会选中平台按钮，把它的文案改掉。
+  const btn = $('#wz2confirm');
+  const info = SRC_INFO[WIZ.source] || SRC_INFO.boss;
+  const label = btn ? btn.textContent : '我登录好了';
+  if(btn) { btn.disabled = true; btn.textContent = '正在检查…'; }
   wizState('正在确认登录状态…');
 
   const r = await post('/api/collect/check', {source: WIZ.source});
-  btn.disabled = false; btn.textContent = '我登录好了';
+  if(btn) { btn.disabled = false; btn.textContent = label; }
   WIZ.state = r;
 
   if(r.ok){
@@ -1354,9 +1401,9 @@ async function checkLogin(){
     const kw = $('#cKw'); if(kw && kw.value) $('#dcKw').value = kw.value;
     const city = $('#cCity'); if(city && city.value) $('#dcCity').value = city.value;
   } else if(r.logged_in === false){
-    wizState('还是没检测到登录。请确认你在浏览器窗口里真的扫码登录成功了', 'err');
+    wizState('还是没检测到' + info.name + '的登录状态。'
+             + '请确认你在浏览器窗口里真的扫码登录成功了', 'err');
   } else {
-    const info = SRC_INFO[WIZ.source] || SRC_INFO.boss;
     wizState('判断不出来。请在浏览器里打开 ' + info.name
              + ' 首页，确认已登录后再点一次', 'err');
   }

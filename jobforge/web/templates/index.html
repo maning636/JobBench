@@ -364,7 +364,10 @@
           登录好了就回来点下面的按钮。<br>
           <span class="dim">只做这一次，以后每天都会自动继续。</span>
         </p>
-        <button class="btn btn-lg" onclick="checkLogin()">我登录好了</button>
+        <!-- 两个平台的页面都能单独打开：专用浏览器是共用的，
+             切平台时另一个平台的页面不会自己出现 -->
+        <div id="wz2links" style="margin:12px 0 4px"></div>
+        <button class="btn btn-lg" id="wz2confirm" onclick="checkLogin()">确认 BOSS 直聘 登录好了</button>
         <p class="dim" id="wz2state" style="margin-top:10px"></p>
       </section>
 
