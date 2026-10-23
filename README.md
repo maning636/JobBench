@@ -101,7 +101,7 @@ python -m jobforge.desktop         # → 独立应用窗口
 
 ```bash
 pip install -r requirements.txt
-python -m jobforge.cli test          # 750 项，全绿才算好
+python -m jobforge.cli test          # 750 项左右，全绿才算好
 ```
 
 `jobforge.cli test` 里带**漏跑检测** —— `tests/` 下新增了测试文件却没注册进
@@ -330,7 +330,9 @@ jobforge/
 python -m jobforge.cli test
 ```
 
-750 项，其中 BOSS 与智联的解析层都是**离线 fixture 测试**（不碰网络）。
+750 项左右，其中 BOSS 与智联的解析层都是**离线 fixture 测试**（不碰网络）。
+（条数会差 1：有条测试按「本机有没有历史数据」分两支，干净 clone 是 751，
+跑过一段时间的机器是 750 —— 都算正常。）
 浏览器会话那部分需要真实登录态，**不在测试范围内**，
 所以请用 `collect --check` 先做连通性自检。
 
