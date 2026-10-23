@@ -220,6 +220,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(add_help=False)
     ap.add_argument("--port", type=int, default=DEFAULT_PORT)
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--desktop", action="store_true",
+                    help="用独立的应用窗口打开，不开浏览器")
     ap.add_argument("--check", action="store_true", help="只自检，不常驻")
     args, _ = ap.parse_known_args()
 
@@ -242,6 +244,16 @@ def main() -> int:
         say(f"（{args.port} 端口被别的程序占着了，这次改用 {port}）")
 
     db = ROOT / "data" / "jobforge.db"
+
+    # 桌面模式：开一个独立的应用窗口，用户不用碰浏览器、也不用记端口
+    if args.desktop:
+        from jobforge.desktop import run_desktop
+        say("正在启动桌面版…")
+        try:
+            return run_desktop(db_path=str(db), port=port)
+        except KeyboardInterrupt:
+            return 0
+
     cmd = _split(py) + ["-X", "utf8", "-m", "jobforge.web.app",
                         "--port", str(port), "--db", str(db)]
 

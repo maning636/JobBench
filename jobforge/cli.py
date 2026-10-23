@@ -385,6 +385,7 @@ def cmd_test(a):
         "test_boss_parser.py",         # BOSS 解析层（离线 fixture）
         "test_zhaopin_parser.py",      # 智联解析层（离线 fixture）
         "test_browser_launcher.py",    # 浏览器启动 / 平台切换（共用窗口）
+        "test_desktop.py",             # 桌面客户端外壳（应用窗口 / 图标 / 资料目录）
         "test_collect_task.py",        # 每日任务：断点续采 / 失败可见
         "test_tracking.py",            # 台账：状态机/提醒/简历版本
         "test_llm.py",                 # LLM 客户端与降级

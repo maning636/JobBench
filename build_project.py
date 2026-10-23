@@ -39,6 +39,7 @@ ALLOW_TOP = {
     "build_project.py",
     # 双击启动入口 —— 没有它，用户打开压缩包看到一堆 .py 就直接放弃了
     "启动.bat",
+    "启动桌面版.bat",
 }
 ALLOW_DIRS = {"jobforge", "tests"}
 
