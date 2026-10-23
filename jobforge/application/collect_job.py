@@ -313,12 +313,20 @@ def run_collect(plan: CollectPlan,
     return o
 
 
-def boss_fetcher_factory(collector) -> Callable[[CollectPlan], Any]:
-    """把 BossCollector 包成 run_collect 需要的 fetcher 形状。"""
+def collector_fetcher_factory(collector) -> Callable[[CollectPlan], Any]:
+    """把任意采集器包成 run_collect 需要的 fetcher 形状。
+
+    BOSS 和智联都是 `collect(keyword, city, pages) -> (jobs, errors)`，
+    所以同一个 factory 通吃 —— 平台差异全部封在各自的采集器里。
+    """
     def _fetch(plan: CollectPlan):
         jobs, errors = collector.collect(plan.keyword, plan.city, plan.pages)
         return jobs, errors, plan.pages
     return _fetch
+
+
+# 旧名保留：外面可能还有地方按这个名字调用
+boss_fetcher_factory = collector_fetcher_factory
 
 
 # =============================================================================

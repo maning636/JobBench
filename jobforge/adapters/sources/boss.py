@@ -202,7 +202,8 @@ class BossCollector:
     """
 
     PLATFORM = "BOSS直聘"
-    LOGIN_MARKERS = ["请登录", "扫码登录", "登录/注册"]
+    # 页面出现这些说明**已登录**（未登录时页面显示的是「登录/注册」「扫码登录」）
+    LOGGED_IN_MARKERS = ["我的", "退出", "已登录", "消息"]
 
     def __init__(self, browser: Optional[BrowserSession] = None,
                  max_pages: int = 3, settle_ms: int = 2500,
@@ -219,7 +220,7 @@ class BossCollector:
                     "reason": f"连不上 Chrome（{self.b.base}）",
                     "howto": f'chrome.exe --remote-debugging-port={self.b.port} '
                              f'--user-data-dir="%TEMP%\\chrome-jobforge"'}
-        st = self.b.login_state("zhipin.com", self.LOGIN_MARKERS)
+        st = self.b.login_state("zhipin.com", self.LOGGED_IN_MARKERS)
         if st.get("logged_in") is False:
             return {"ok": False, "reason": "BOSS 页面显示未登录",
                     "howto": "在那个 Chrome 窗口里登录 BOSS 直聘账号"}

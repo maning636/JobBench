@@ -162,9 +162,17 @@ class BrowserSession:
         except Exception as e:  # noqa: BLE001
             raise BrowserError(f"CDP 通信失败：{type(e).__name__}: {e}") from e
 
-    def evaluate(self, ws_url: str, js: str) -> Any:
-        r = self._ws_call(ws_url, "Runtime.evaluate",
-                          {"expression": js, "returnByValue": True})
+    def evaluate(self, ws_url: str, js: str, await_promise: bool = False) -> Any:
+        """在页面里执行 JS 并取回值。
+
+        `await_promise=True` 时会等页面里的 async 函数真正跑完再取结果。
+        **不打开它，async 函数返回的是一个还没完成的 Promise 对象** ——
+        序列化回来是空的，调用方拿到 None 却以为"接口返回了空"。
+        """
+        params: Dict[str, Any] = {"expression": js, "returnByValue": True}
+        if await_promise:
+            params["awaitPromise"] = True
+        r = self._ws_call(ws_url, "Runtime.evaluate", params)
         res = (r or {}).get("result", {})
         if res.get("subtype") == "error":
             raise BrowserError(f"页面脚本执行出错：{res.get('description')}")
@@ -232,16 +240,100 @@ class BrowserSession:
 
     # ------------------------------------------------------------------
 
-    def login_state(self, domain: str, markers: List[str]) -> Dict[str, Any]:
-        """粗判是否已登录。用于给用户明确提示，而不是靠猜。"""
+    def post_json_in_page(self, page_url: str, domain: str, api_url: str,
+                          body: Dict[str, Any], wait_selector: str = "",
+                          settle_ms: int = 2500, prefer: Optional[List[str]] = None,
+                          max_wait: int = 25, navigate: bool = True,
+                          keep_tab: bool = False) -> Any:
+        """在页面上下文里发一个 POST，把 JSON 结果拿回来。
+
+        **为什么需要它**：有些平台的数据不在 HTML 里，而在它自己的接口里
+        （智联的 `/c/i/search/positions` 就是这样）。
+        直接用 urllib 打这个接口会被风控挡掉 —— 实测智联对纯 HTTP 请求
+        一律返回占位数据（`results: []` + `numFound: 999999`），
+        加上 Referer / Cookie / x-zp-page-request-id 头也还是占位值。
+        必须**借浏览器的手**：请求由页面里的 fetch 发出，
+        自带完整 Cookie、TLS 指纹和 JS 环境。
+
+        参数：
+          page_url     —— 先导航到哪个页面（建立 cookie / 同源上下文）
+          api_url      —— 要 POST 的接口
+          body         —— JSON 请求体
+          navigate     —— 是否先导航。翻页时传 False 复用已开的标签页，
+                          智联的搜索页有 1.7MB，每翻一页都重新加载太慢
+          keep_tab     —— 是否保留自己开的标签页（下次调用还能复用）
+        """
+        self.require()
+
+        tab = self.find_tab(domain, prefer)
+        reused = tab is not None
+        if not tab:
+            if not navigate:
+                raise BrowserError(
+                    f"没有找到 {domain} 的标签页，无法在已有页面上发请求")
+            tab = self.new_tab(page_url)
+        ws = tab.get("webSocketDebuggerUrl")
+        if not ws:
+            raise BrowserError("标签页没有 webSocketDebuggerUrl，无法接管")
+
+        try:
+            if navigate:
+                self._ws_call(ws, "Page.navigate", {"url": page_url}, wait_result=False)
+                if wait_selector:
+                    self._wait_for(ws, wait_selector, max_wait)
+                time.sleep(settle_ms / 1000)
+
+            js = """
+            (async () => {
+                const r = await fetch(%(api)s, {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: {'Content-Type': 'application/json',
+                              'Accept': 'application/json, text/plain, */*'},
+                    body: JSON.stringify(%(body)s)
+                });
+                const t = await r.text();
+                return {status: r.status, text: t};
+            })()
+            """ % {"api": json.dumps(api_url), "body": json.dumps(body)}
+
+            raw = self.evaluate(ws, js, await_promise=True)
+            if not isinstance(raw, dict):
+                raise BrowserError(
+                    "页面内 fetch 没有返回预期结果（"
+                    "拿到 %r）—— 页面可能还没加载完" % (type(raw).__name__,))
+            status = raw.get("status")
+            text = raw.get("text") or ""
+            if status != 200:
+                raise BrowserError(f"接口 HTTP {status}：{text[:200]}")
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as e:
+                raise BrowserError(f"接口返回的不是 JSON：{text[:200]}") from e
+        finally:
+            # 只关我们自己开的标签页，不动用户已有的
+            if not reused and not keep_tab:
+                try:
+                    self._ws_call(ws, "Target.closeTarget",
+                                  {"targetId": tab.get("id")}, wait_result=False)
+                except Exception:  # noqa: BLE001
+                    pass
+
+    def login_state(self, domain: str, logged_in_markers: List[str]) -> Dict[str, Any]:
+        """粗判是否已登录。用于给用户明确提示，而不是靠猜。
+
+        ⚠ 参数是「**已登录**时页面会出现的文案」，命中即视为已登录。
+        传错方向会得到完全相反的结论 —— 这条链原先没有测试覆盖，
+        现在参数名写死成 logged_in_markers 就是为了让传错的人看得见。
+        """
         try:
             tab = self.find_tab(domain)
             if not tab:
                 return {"logged_in": None, "reason": f"没有打开 {domain} 的标签页"}
             ws = tab["webSocketDebuggerUrl"]
             html = self.evaluate(ws, "document.documentElement.outerHTML") or ""
-            hit = [m for m in markers if m in html]
-            return {"logged_in": bool(hit) if markers else None,
+            hit = [m for m in logged_in_markers if m in html]
+            return {"logged_in": bool(hit) if logged_in_markers else None,
                     "markers": hit}
         except BrowserError as e:
             return {"logged_in": None, "reason": str(e)}

@@ -1188,7 +1188,54 @@ async function doImport(){
    状态随时能查。**任何时候都不让用户去敲命令行。**
    ═══════════════════════════════════════════════════════════ */
 
-const WIZ = { step: 1, state: {} };
+const WIZ = { step: 1, state: {}, source: 'boss' };
+
+/* 两个平台的差别不只是名字：
+   BOSS 必须登录才能采到东西，智联**不登录也能采**（实测）。
+   所以换平台不只是换下拉框，第 2 步的整段话和判断都得跟着变。 */
+const SRC_INFO = {
+  boss: {
+    name: 'BOSS 直聘',
+    loginTitle: '在弹出的窗口里扫码登录 BOSS 直聘',
+    loginDesc: '登录好了就回来点下面的按钮。<br>'
+             + '<span class="dim">只做这一次，以后每天都会自动继续。</span>',
+    needLogin: true,
+    stepLabel: '扫码登录',
+    note: 'BOSS 直聘需要登录一次才能采集 —— 只做这一次。',
+  },
+  zhaopin: {
+    name: '智联招聘',
+    loginTitle: '在弹出的窗口里扫码登录智联招聘（可选）',
+    loginDesc: '不登录也能采集 —— 智联未登录照样能拿到完整岗位和真实薪资。<br>'
+             + '<span class="dim">登录只是为了以后能点「立即沟通」。</span>',
+    needLogin: false,
+    stepLabel: '扫码登录（可选）',
+    note: '智联招聘不登录也能采集，登录后多几个功能。',
+  },
+};
+
+function applySourceText(){
+  const info = SRC_INFO[WIZ.source] || SRC_INFO.boss;
+  const t = $('#wz2title'); if(t) t.innerHTML = esc(info.loginTitle);
+  const d = $('#wz2desc');  if(d) d.innerHTML = info.loginDesc;
+  const n = $('#srcNote');  if(n) n.innerHTML = esc(info.note);
+  const st = document.querySelector('.wiz-step[data-s="2"]');
+  if(st) st.innerHTML = '<span class="n">2</span>' + esc(info.stepLabel);
+}
+
+/* 换平台：换文案 + 重新问后端状态。
+   **不重开抽屉** —— openDrawer 是 toggle 式的，重开会把面板关掉。 */
+async function onSourceChange(){
+  const sel = $('#dcSource');
+  if(sel) WIZ.source = sel.value || 'boss';
+  applySourceText();
+  wizReset();
+  WIZ.step = 1;
+  wizState('正在查看状态…');
+  const r = await post('/api/collect/status', {source: WIZ.source});
+  WIZ.state = r;
+  applyWizardState(r);
+}
 
 function wizGo(step, done = []){
   WIZ.step = step;
@@ -1226,8 +1273,9 @@ async function openCollectWizard(){
   openDrawer('collect');
   wizReset();
   WIZ.step = 1;
+  applySourceText();
   wizState('正在查看状态…');
-  const r = await post('/api/collect/status');
+  const r = await post('/api/collect/status', {source: WIZ.source});
   WIZ.state = r;
   applyWizardState(r);
 }
@@ -1274,7 +1322,7 @@ async function launchBrowser(){
   btn.disabled = true; btn.textContent = '正在启动…';
   wizState('正在打开浏览器窗口，请稍等…');
 
-  const r = await post('/api/collect/launch-browser');
+  const r = await post('/api/collect/launch-browser', {source: WIZ.source});
   btn.disabled = false; btn.textContent = old;
 
   WIZ.state = r;
@@ -1282,7 +1330,7 @@ async function launchBrowser(){
     wizState('浏览器已启动。如果没看到窗口，看一下任务栏。', 'ok');
     // 给浏览器一点时间把登录页加载出来
     setTimeout(async () => {
-      const s2 = await post('/api/collect/status');
+      const s2 = await post('/api/collect/status', {source: WIZ.source});
       WIZ.state = s2;
       applyWizardState(s2);
     }, 2500);
@@ -1296,7 +1344,7 @@ async function checkLogin(){
   btn.disabled = true; btn.textContent = '正在检查…';
   wizState('正在确认登录状态…');
 
-  const r = await post('/api/collect/check');
+  const r = await post('/api/collect/check', {source: WIZ.source});
   btn.disabled = false; btn.textContent = '我登录好了';
   WIZ.state = r;
 
@@ -1308,7 +1356,9 @@ async function checkLogin(){
   } else if(r.logged_in === false){
     wizState('还是没检测到登录。请确认你在浏览器窗口里真的扫码登录成功了', 'err');
   } else {
-    wizState('判断不出来。请在浏览器里打开 zhipin.com 首页，确认已登录后再点一次', 'err');
+    const info = SRC_INFO[WIZ.source] || SRC_INFO.boss;
+    wizState('判断不出来。请在浏览器里打开 ' + info.name
+             + ' 首页，确认已登录后再点一次', 'err');
   }
 }
 
@@ -1322,12 +1372,12 @@ async function runCollect(fromWizard){
     + '采集中…（保守模式要几分钟，页面别关）</div>';
 
   const r = await post('/api/collect/run',
-    {keyword: kw || 'Java', city, pages: pg});
+    {keyword: kw || 'Java', city, pages: pg, source: WIZ.source});
 
   if(!r.ok && r.show_wizard){
     // 中途状态掉了（比如浏览器被关了）—— 直接把人带回该做的那一步
     el.innerHTML = '';
-    applyWizardState(await post('/api/collect/status'));
+    applyWizardState(await post('/api/collect/status', {source: WIZ.source}));
     return;
   }
   if(!r.ok && !r.headline){

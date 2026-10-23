@@ -83,8 +83,13 @@ python -m jobforge.cli test          # 全部测试
 平台**不提供「按发布时间回溯」的能力**——搜索结果只给当前在招的。
 所以历史只能靠每天积累。抓取需要你自己的 Chrome 登录态。
 
-**界面上点「立即采集」**，跟着三步走：启动浏览器 → 扫码登录一次 → 开始采集。
+**界面上点「立即采集」**，先选平台（BOSS 直聘 / 智联招聘），跟着三步走：
+启动浏览器 → 扫码登录一次 → 开始采集。
 全程不用敲命令，登录过一次之后长期有效。
+
+> 两个平台的登录要求不一样：**BOSS 必须登录才采得到东西**；
+> **智联不登录也能采**（实测未登录照样返回完整岗位和真实薪资），
+> 登录只是为了以后能点「立即沟通」。
 
 想让电脑每天定时自己采：到「设置」页点「开启每日自动采集」，
 选个时间点就行。
@@ -97,7 +102,9 @@ python -m jobforge.cli test          # 全部测试
 chrome.exe --remote-debugging-port=9222 --user-data-dir="%TEMP%\chrome-jobforge"
 
 python -m jobforge.cli collect --check                      # 连通性自检
-python -m jobforge.cli collect --keyword Java --pages 3     # 采集一次
+python -m jobforge.cli collect --keyword Java --pages 3     # 采集一次（BOSS）
+python -m jobforge.cli collect --source zhaopin \
+       --keyword Java --city 北京 --pages 3                # 采集一次（智联）
 python -m jobforge.cli install-task --time 09:30            # 安装每日计划任务
 ```
 
@@ -108,10 +115,34 @@ python -m jobforge.cli install-task --time 09:30            # 安装每日计划
 
 ### 导入岗位（不装浏览器也能用）
 
-界面上点「导入」，把 BOSS 页面复制的岗位信息粘进来，
+界面上点「导入」，把招聘平台页面复制的岗位信息粘进来，
 多个岗位用**空行**隔开。也支持中文表头的 CSV。
 
 解析不出来的字段会**留空并标注**，不会瞎猜。
+
+---
+
+## 支持哪些平台
+
+| 平台 | 状态 | 要登录吗 | 备注 |
+|---|---|---|---|
+| BOSS 直聘 | ✅ 已实现 | 必须 | 扫码登录一次即可长期复用 |
+| 智联招聘 | ✅ 已实现 | **不登录也能采** | 登录后多几个功能（可点「立即沟通」） |
+| 前程无忧 / 拉勾等 | ❌ 未实现 | — | 见「还没做的」 |
+
+两个平台的采集方式**不是同一套**，但对外的用法一样（选平台 → 扫码 → 采集）：
+
+- **BOSS** —— 浏览器登录后直接读列表页 DOM。
+- **智联** —— 智联已经改版，老接口全部失效（实测：老接口只返回
+  `results:[]` + `numFound:999999` 的反爬占位值）。现在走的是
+  **在页面里 POST 智联自己的列表接口**（`/c/i/search/positions`），
+  参数是从智联的 JS 里挖出来的真实参数名（`S_SOU_FULL_INDEX` /
+  `S_SOU_WORK_CITY`）。
+  智联页面上显示的薪资是打码的（`**-**元`），真值只存在于接口返回里。
+
+> 智联的城市必须用**数字码**（北京 = 530，上海 = 538 …，共 462 个城市）。
+> 传中文名智联**不报错**，会静默返回别的城市的数据 ——
+> 所以本工具查不到城市时**直接报错**，绝不猜一个。
 
 ---
 
@@ -120,7 +151,8 @@ python -m jobforge.cli install-task --time 09:30            # 安装每日计划
 ```bash
 jobforge web                                  # 启动界面
 jobforge collect --check                      # 浏览器连通性自检
-jobforge collect --keyword Java --pages 3     # 采集一次
+jobforge collect --keyword Java --pages 3     # 采集一次（BOSS 直聘）
+jobforge collect --source zhaopin --keyword Java --city 北京   # 采集一次（智联招聘）
 jobforge collect --history 10                 # 采集历史
 jobforge collect --fast                       # 跳过页间等待（不推荐）
 
@@ -221,6 +253,7 @@ jobforge/
 │  └─ service.py          分析编排 + 语义缓存
 ├─ adapters/
 │  ├─ sources/boss.py     BOSS 抓取（解析层有 fixture 测试）
+│  ├─ sources/zhaopin.py  智联抓取（解析层有 fixture 测试）
 │  ├─ sources/browser.py  CDP 会话
 │  ├─ sources/manual.py   手动导入
 │  └─ llm/                用户自填，不绑定厂商
@@ -238,9 +271,12 @@ jobforge/
 python -m jobforge.cli test
 ```
 
-628 项，其中 BOSS 解析层是**离线 fixture 测试**（不碰网络）。
+689 项，其中 BOSS 与智联的解析层都是**离线 fixture 测试**（不碰网络）。
 浏览器会话那部分需要真实登录态，**不在测试范围内**，
 所以请用 `collect --check` 先做连通性自检。
+
+> 智联的 fixture 是**真接口返回的原始结构**，不是手搓的样本 ——
+> 平台改版时谁有真实返回谁补，解析层立刻就能验出字段漂移。
 
 ---
 
@@ -269,14 +305,16 @@ python -m jobforge.cli test
 
 请遵守平台服务条款与访问频率限制。商业使用前请自行确认合规性。
 
-> 目前**只实现了 BOSS 直聘**。智联 / 前程无忧还没有做 ——
+> 目前**实现了 BOSS 直聘和智联招聘两个平台**。前程无忧 / 拉勾等还没有做 ——
 > 遇到「全平台通杀」的说法请以本节为准。数据也可以从网页手动导入。
 
 ---
 
 ## 还没做的（说在前面）
 
-- 智联 / 前程无忧采集：**未实现**
+- 前程无忧 / 拉勾等平台采集：**未实现**
+- 智联的**无限滚动翻页**：需要登录才能翻（未登录时智联只给第一页，
+  本工具用接口翻页代替，已实测第 1、2 页岗位无交集 = 真翻页）
 - 自动投递：**刻意不做**，投递必须由你本人按下去
 - 岗位历史回溯：平台不提供按发布时间回溯，只能从今天起每天积累
 - 跨平台账号体系：**没有**，也没有云端，所有数据在本机

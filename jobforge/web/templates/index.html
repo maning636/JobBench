@@ -327,6 +327,17 @@
       需要你登录一次招聘网站（只做一次）。下面三步，跟着点就行，不用敲任何命令。
     </p>
 
+    <!-- 平台选择：两个平台的登录方式和采集入口不一样，必须先选 -->
+    <div class="fgrid" style="margin:14px 0 2px">
+      <div class="field"><label>从哪个平台采</label>
+        <select id="dcSource" onchange="onSourceChange()">
+          <option value="boss">BOSS 直聘</option>
+          <option value="zhaopin">智联招聘</option>
+        </select>
+      </div>
+    </div>
+    <p class="dim" id="srcNote" style="margin:2px 0 0"></p>
+
     <!-- 步骤指示 -->
     <div class="wiz-steps">
       <div class="wiz-step" data-s="1"><span class="n">1</span>启动浏览器</div>
@@ -348,8 +359,8 @@
 
       <!-- 第 2 步 -->
       <section class="wiz-pane" id="wz2" hidden>
-        <h4>在弹出的窗口里扫码登录 BOSS 直聘</h4>
-        <p>
+        <h4 id="wz2title">在弹出的窗口里扫码登录 BOSS 直聘</h4>
+        <p id="wz2desc">
           登录好了就回来点下面的按钮。<br>
           <span class="dim">只做这一次，以后每天都会自动继续。</span>
         </p>

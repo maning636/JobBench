@@ -108,25 +108,36 @@ def cmd_daily(a):
 def cmd_collect(a):
     """每日采集。这是"从今天开始每天积累"的入口。"""
     from jobforge.application.collect_job import (
-        CollectPlan, RunStore, run_collect, boss_fetcher_factory,
+        CollectPlan, RunStore, run_collect, collector_fetcher_factory,
     )
     from jobforge.persistence.sqlite_store import Store
     from jobforge.adapters.sources.browser import BrowserError
-    from jobforge.adapters.sources.boss import BossCollector, ParseError
+
+    src = (getattr(a, "source", "boss") or "boss").strip().lower()
+    if src == "zhaopin":
+        from jobforge.adapters.sources.zhaopin import ZhaopinCollector, ParseError
+        col_cls = ZhaopinCollector
+        platform_name = "智联招聘"
+    else:
+        from jobforge.adapters.sources.boss import BossCollector, ParseError
+        col_cls = BossCollector
+        platform_name = "BOSS 直聘"
+        src = "boss"
 
     runs = RunStore(resolve_db(a.db))
 
     # --check：只做连通性自检，不真抓。给用户一个明确的「能不能用」结论。
     if a.check:
-        col = BossCollector(rate_limit=False)
+        col = col_cls(rate_limit=False)
         r = col.check_ready()
         if r["ok"]:
             print(f"✓ {r.get('note', 'Chrome 已连接')}")
             print(f"  端点：{col.b.base}")
+            print(f"  平台：{platform_name}")
             return 0
         print(f"✗ {r['reason']}")
         if r.get("howto"):
-            print(f"\n请先执行：\n  {r['howto']}\n\n然后在那个 Chrome 窗口里登录 BOSS 直聘。")
+            print(f"\n请先执行：\n  {r['howto']}\n\n然后在那个 Chrome 窗口里登录{platform_name}。")
         return 1
 
     if a.history:
@@ -144,20 +155,21 @@ def cmd_collect(a):
                 print(f"        ✗ {e}")
         return 0
 
-    plan = CollectPlan(keyword=a.keyword, city=a.city, pages=a.pages)
-    col = BossCollector(max_pages=a.pages, rate_limit=not a.fast)
-    print("采集前自检…")
+    plan = CollectPlan(keyword=a.keyword, city=a.city, pages=a.pages,
+                       sources=[src])
+    col = col_cls(max_pages=a.pages, rate_limit=not a.fast)
+    print(f"采集前自检（{platform_name}）…")
     ready = col.check_ready()
     if not ready["ok"]:
         print(f"✗ {ready['reason']}")
         if ready.get("howto"):
             print(f"\n请先执行：\n  {ready['howto']}\n\n"
-                  f"然后在那个 Chrome 窗口里登录 BOSS 直聘，再跑一次。\n"
+                  f"然后在那个 Chrome 窗口里登录{platform_name}，再跑一次。\n"
                   f"（可以先用 `collect --check` 单独验证连通性）")
         return 1
     print(f"  {ready.get('note', '')}")
 
-    print(f"\n开始采集：关键词「{a.keyword}」"
+    print(f"\n开始采集：{platform_name} · 关键词「{a.keyword}」"
           + (f" · {a.city}" if a.city else "") + f" · 最多 {a.pages} 页")
     if not a.fast:
         print("  保守速率（每页间隔 45~90 秒），加 --fast 可跳过等待")
@@ -167,7 +179,7 @@ def cmd_collect(a):
 
     out = run_collect(
         plan, Store(resolve_db(a.db)), runs,
-        fetcher=boss_fetcher_factory(col),
+        fetcher=collector_fetcher_factory(col),
         resume=not a.no_resume,
         progress=prog,
     )
@@ -371,6 +383,7 @@ def cmd_test(a):
         "check_dom_contract.py",       # JS 引用的 id 必须都存在
         "test_contract_and_flow.py",   # 契约与流程
         "test_boss_parser.py",         # BOSS 解析层（离线 fixture）
+        "test_zhaopin_parser.py",      # 智联解析层（离线 fixture）
         "test_collect_task.py",        # 每日任务：断点续采 / 失败可见
         "test_tracking.py",            # 台账：状态机/提醒/简历版本
         "test_llm.py",                 # LLM 客户端与降级
@@ -381,6 +394,17 @@ def cmd_test(a):
     ]
     root = Path(__file__).resolve().parents[1]
     failed = 0
+
+    # 漏跑检测：tests/ 下有 test_*.py 却没注册进上面的列表 = 有人加了测试
+    # 忘了挂上，那份测试**永远不会跑** —— 这是静默的质量倒退，比测试失败更难发现。
+    registered = set(tests)
+    on_disk = {p.name for p in (root / "tests").glob("test_*.py")}
+    missing = sorted(on_disk - registered)
+    if missing:
+        print(f"\n⚠ 有测试文件没注册进测试列表：{missing}")
+        print("  它们不会被执行。请把文件名加进 cmd_test 的 tests 列表。")
+        failed += 1
+
     for t in tests:
         p = root / "tests" / t
         print(f"\n===== {t} =====")
@@ -437,6 +461,8 @@ def main():
     co.add_argument("--keyword", default="Java", help="搜索关键词")
     co.add_argument("--city", default="", help="城市，留空=全国")
     co.add_argument("--pages", type=int, default=3, help="最多翻几页")
+    co.add_argument("--source", default="boss", choices=["boss", "zhaopin"],
+                    help="采集平台：boss=BOSS直聘，zhaopin=智联招聘")
     co.add_argument("--fast", action="store_true", help="跳过页间等待（不推荐）")
     co.add_argument("--check", action="store_true", help="只做连通性自检，不抓取")
     co.add_argument("--history", type=int, nargs="?", const=10, default=0,

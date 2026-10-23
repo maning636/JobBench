@@ -116,6 +116,8 @@ class BrowserStatus:
     browser_path: str = ""
     message: str = ""
     hint: str = ""
+    # 这个平台未登录能不能采。智联能，BOSS 不能。
+    login_required: bool = True
     steps: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -123,6 +125,7 @@ class BrowserStatus:
             "installed": self.installed,
             "running": self.running,
             "logged_in": self.logged_in,
+            "login_required": self.login_required,
             "browser_path": self.browser_path,
             "browser_name": browser_name(self.browser_path) if self.browser_path else "",
             "message": self.message,
@@ -131,8 +134,16 @@ class BrowserStatus:
 
     @property
     def ready(self) -> bool:
-        """能不能开始采集。"""
-        return bool(self.installed and self.running and self.logged_in)
+        """能不能开始采集。
+
+        未登录是否算数，取决于平台 —— BOSS 未登录采不到东西，
+        智联未登录也能采（实测），所以智联只要浏览器在跑就算就绪。
+        """
+        if not (self.installed and self.running):
+            return False
+        if not self.login_required:
+            return True
+        return self.logged_in is True
 
 
 def cdp_alive(host: str = CDP_HOST, port: int = DEBUG_PORT) -> bool:
@@ -149,9 +160,38 @@ _ANON_MARKERS = ["登录/注册", "请登录", "扫码登录", "登录后查看"
 # 登录后会出现这些
 _AUTH_MARKERS = ["我的", "退出", "已登录", "消息"]
 
+# 智联的判据跟 BOSS 不一样（它的登录入口是「微信扫码快捷登录」）
+_ZL_ANON_MARKERS = ["微信扫码快捷登录", "验证码登录/注册",
+                    "国家网络身份认证登录", "其他方式登录"]
+_ZL_AUTH_MARKERS = ["我的简历", "退出登录", "消息中心"]
+
+# 各平台的登录页 + 判据
+PLATFORMS = {
+    "boss": {
+        "domain": "zhipin.com",
+        "login_url": "https://www.zhipin.com/web/geek/job",
+        "anon": _ANON_MARKERS,
+        "auth": _AUTH_MARKERS,
+        # BOSS 未登录就采不到东西，必须登录
+        "login_required": True,
+        "name": "BOSS 直聘",
+    },
+    "zhaopin": {
+        "domain": "zhaopin.com",
+        "login_url": "https://www.zhaopin.com/jobs/",
+        "anon": _ZL_ANON_MARKERS,
+        "auth": _ZL_AUTH_MARKERS,
+        # 智联实测未登录也能采到完整岗位 —— 登录只是锦上添花
+        "login_required": False,
+        "name": "智联招聘",
+    },
+}
+
 
 def probe_login(host: str = CDP_HOST, port: int = DEBUG_PORT,
-                domain: str = "zhipin.com") -> Optional[bool]:
+                domain: str = "zhipin.com",
+                anon_markers: Optional[List[str]] = None,
+                auth_markers: Optional[List[str]] = None) -> Optional[bool]:
     """判断是否已登录。
 
     `None` = 判断不了（浏览器没开 / 没有该站标签页）。
@@ -162,23 +202,33 @@ def probe_login(host: str = CDP_HOST, port: int = DEBUG_PORT,
         return None
     from jobforge.adapters.sources.browser import BrowserSession, BrowserError
     b = BrowserSession(host=host, port=port)
+    anon = anon_markers if anon_markers is not None else _ANON_MARKERS
+    auth = auth_markers if auth_markers is not None else _AUTH_MARKERS
     try:
         tab = b.find_tab(domain)
         if not tab:
             return None
         html = b.evaluate(tab["webSocketDebuggerUrl"],
                           "document.documentElement.outerHTML") or ""
-        if any(m in html for m in _ANON_MARKERS):
+        if any(m in html for m in anon):
             return False
-        if any(m in html for m in _AUTH_MARKERS):
+        if any(m in html for m in auth):
             return True
         return None
     except (BrowserError, Exception):  # noqa: BLE001
         return None
 
 
-def get_status() -> BrowserStatus:
+def get_status(source: str = "boss") -> BrowserStatus:
+    """浏览器 + 登录状态。
+
+    `source` 决定看哪个平台、判据是什么，以及**未登录算不算就绪**：
+      · BOSS —— 未登录采不到数据，必须登录才算 ready
+      · 智联 —— 实测未登录也能采，登录只是多几个功能
+    """
     st = BrowserStatus()
+    p = PLATFORMS.get((source or "boss").strip().lower(), PLATFORMS["boss"])
+    st.login_required = p["login_required"]
     path = find_browser()
     st.browser_path = path or ""
     st.installed = bool(path)
@@ -195,16 +245,27 @@ def get_status() -> BrowserStatus:
         st.hint = "点下面的「启动浏览器」按钮，我们会帮你打开"
         return st
 
-    st.logged_in = probe_login()
+    st.logged_in = probe_login(domain=p["domain"],
+                               anon_markers=p["anon"],
+                               auth_markers=p["auth"])
+
     if st.logged_in is True:
         st.message = "已经登录好了"
     elif st.logged_in is False:
-        st.message = "浏览器已启动，但还没登录招聘网站"
-        st.hint = "在弹出的浏览器窗口里扫码登录，然后回来点「我登录好了」"
+        if p["login_required"]:
+            st.message = f"浏览器已启动，但还没登录{p['name']}"
+            st.hint = f"在弹出的浏览器窗口里扫码登录，然后回来点「我登录好了」"
+        else:
+            st.message = f"浏览器已启动（{p['name']}未登录也能采集）"
+            st.hint = f"想点「立即沟通」的话，扫码登录一下就行；不登录也能正常采集"
     else:
-        st.message = "浏览器已启动，暂时判断不出登录状态"
-        st.hint = ("如果你已经登录过了，可以直接点「我登录好了」让程序确认一下；"
-                   "没登录的话请在浏览器窗口里扫码登录")
+        if p["login_required"]:
+            st.message = "浏览器已启动，暂时判断不出登录状态"
+            st.hint = ("如果你已经登录过了，可以直接点「我登录好了」让程序确认一下；"
+                       "没登录的话请在浏览器窗口里扫码登录")
+        else:
+            st.message = "浏览器已启动"
+            st.hint = f"可以直接开始采集{p['name']}；登录后能多几个功能"
     return st
 
 
@@ -213,7 +274,7 @@ def get_status() -> BrowserStatus:
 # =============================================================================
 
 def launch(host: str = CDP_HOST, port: int = DEBUG_PORT,
-           open_login_page: bool = True) -> Dict[str, Any]:
+           open_login_page: bool = True, source: str = "boss") -> Dict[str, Any]:
     """拉起带调试端口的浏览器。
 
     先检查是不是已经在跑 —— 重复启动会开出第二个窗口，
@@ -239,7 +300,8 @@ def launch(host: str = CDP_HOST, port: int = DEBUG_PORT,
         "--no-default-browser-check",
     ]
     if open_login_page:
-        args.append("https://www.zhipin.com/web/geek/job")
+        args.append(PLATFORMS.get((source or "boss").strip().lower(),
+                                  PLATFORMS["boss"])["login_url"])
 
     try:
         if platform.system() == "Windows":

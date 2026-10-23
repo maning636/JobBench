@@ -625,16 +625,23 @@ def create_app(db_path: str = DEFAULT_DB, store: Optional[Store] = None) -> Flas
         """
         body = request.get_json(silent=True) or {}
         from jobforge.application.collect_job import (
-            CollectPlan, run_collect, boss_fetcher_factory,
+            CollectPlan, run_collect, collector_fetcher_factory,
         )
         from jobforge.application import browser_launcher as bl
-        from jobforge.adapters.sources.boss import BossCollector
 
         keyword = (body.get("keyword") or "Java").strip()
         city = (body.get("city") or "").strip()
         pages = int(body.get("pages") or 3)
+        src = (body.get("source") or "boss").strip().lower()
+        if src == "zhaopin":
+            from jobforge.adapters.sources.zhaopin import ZhaopinCollector
+            col_cls = ZhaopinCollector
+        else:
+            from jobforge.adapters.sources.boss import BossCollector
+            col_cls = BossCollector
+            src = "boss"
 
-        stt = bl.get_status()
+        stt = bl.get_status(src)
         if not stt.ready:
             # 不再返回命令让用户自己敲 —— 告诉他点哪个按钮
             return jsonify({
@@ -642,10 +649,11 @@ def create_app(db_path: str = DEFAULT_DB, store: Optional[Store] = None) -> Flas
                 "next_step": _next_step(stt), "show_wizard": True,
             }), 400
 
-        col = BossCollector(max_pages=pages, rate_limit=not body.get("fast"))
+        col = col_cls(max_pages=pages, rate_limit=not body.get("fast"))
         out = run_collect(
-            CollectPlan(keyword=keyword, city=city, pages=pages),
-            st, runs, fetcher=boss_fetcher_factory(col))
+            CollectPlan(keyword=keyword, city=city, pages=pages,
+                        sources=[src]),
+            st, runs, fetcher=collector_fetcher_factory(col))
         return jsonify({"ok": out.ok, **out.to_dict(),
                         "headline": out.headline()})
 
@@ -653,21 +661,27 @@ def create_app(db_path: str = DEFAULT_DB, store: Optional[Store] = None) -> Flas
     def collect_status():
         """浏览器 + 登录状态。前端据此决定"你现在该点哪个按钮"。"""
         from jobforge.application import browser_launcher as bl
-        st = bl.get_status()
-        return jsonify({"ok": True, **st.to_dict(),
+        body = request.get_json(silent=True) or {}
+        src = (body.get("source") or "boss").strip().lower()
+        st = bl.get_status(src)
+        return jsonify({"ok": True, "source": src, **st.to_dict(),
                         "next_step": _next_step(st)})
 
     @app.post("/api/collect/launch-browser")
     def collect_launch():
         """一键启动专用浏览器 —— 不让用户去敲命令行。"""
         from jobforge.application import browser_launcher as bl
-        r = bl.launch()
+        body = request.get_json(silent=True) or {}
+        src = (body.get("source") or "boss").strip().lower()
+        r = bl.launch(source=src)
         return jsonify({"ok": bool(r.get("ok")), **r})
 
     @app.post("/api/collect/check")
     def collect_check():
         from jobforge.application import browser_launcher as bl
-        r = bl.get_status()
+        body = request.get_json(silent=True) or {}
+        src = (body.get("source") or "boss").strip().lower()
+        r = bl.get_status(src)
         return jsonify({"ok": bool(r.get("ready")), **r.to_dict(),
                         "next_step": _next_step(r)})
 

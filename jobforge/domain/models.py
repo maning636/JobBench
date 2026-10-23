@@ -330,11 +330,14 @@ def build_json_schema() -> Dict[str, Any]:
 # =============================================================================
 
 _SALARY_RE = re.compile(
-    r"(?P<lo>\d+(?:\.\d+)?)\s*[-~—至到]\s*(?P<hi>\d+(?:\.\d+)?)\s*([kK])"
+    r"(?P<lo>\d+(?:\.\d+)?)\s*[-~—至到]\s*(?P<hi>\d+(?:\.\d+)?)\s*([kK]|万)"
 )
-_SINGLE_RE = re.compile(r"(?P<v>\d+(?:\.\d+)?)\s*[-~—]?\s*([kK])")
+_SINGLE_RE = re.compile(r"(?P<v>\d+(?:\.\d+)?)\s*[-~—]?\s*([kK]|万)")
 # 无单位数值区间：日薪去掉"元/天"后剩 "200-300"
-_PLAIN_RANGE_RE = re.compile(r"(?P<lo>\d{2,6})\s*[-~—至到]\s*(?P<hi>\d{2,6})(?!\s*[kK])")
+#
+# ⚠ 排除项里必须同时有「万」：否则 "10-20万" 会被这条规则吃掉，
+# 解析成 10-20 而不是 100000-200000 —— 实测踩过。
+_PLAIN_RANGE_RE = re.compile(r"(?P<lo>\d{2,6})\s*[-~—至到]\s*(?P<hi>\d{2,6})(?!\s*[kK万])")
 # 去单位后剩下的裸单值：「160元/天」去掉「元/天」后剩 "160"
 #
 # 实测踩过两次：
@@ -344,6 +347,19 @@ _PLAIN_RANGE_RE = re.compile(r"(?P<lo>\d{2,6})\s*[-~—至到]\s*(?P<hi>\d{2,6})
 #      被单值规则吃掉上限、解析成 8000/8000 —— 下限直接丢了，比不修更糟。
 # 所以它必须排在最后：区间、K 值都认完了，剩下的裸数字才轮到它。
 _BARE_SINGLE_RE = re.compile(r"(?<![\d.\-~—至到])\b(?P<v>\d{2,6})(?:\.\d+)?\b(?!\s*[-~—至到])")
+
+
+def _unit_scale(unit: str) -> int:
+    """薪资单位换算。K=千，万=一万。
+
+    「万」是智联的主力写法 —— 实测智联搜索结果里 **70%** 的薪资写成
+    「1.5-3万」「1.8-2.5万」这种，不认它等于智联七成的岗位薪资解析不出来。
+    """
+    if unit.lower() == "k":
+        return 1000
+    if unit == "万":
+        return 10000
+    return 1
 
 
 def parse_salary(text: str) -> Dict[str, Any]:
@@ -389,7 +405,7 @@ def parse_salary(text: str) -> Dict[str, Any]:
     # **必须排在区间之后** —— 顺序反了会把 5000-8000 解析成 8000/8000。
     m = _SALARY_RE.search(plain)
     if m:
-        k = 1000 if m.group(3).lower() == "k" else 1
+        k = _unit_scale(m.group(3))
         lo = int(float(m.group("lo")) * k)
         hi = int(float(m.group("hi")) * k)
         return {"min": min(lo, hi), "max": max(lo, hi), "period": period,
@@ -397,7 +413,7 @@ def parse_salary(text: str) -> Dict[str, Any]:
 
     m = _SINGLE_RE.search(plain)
     if m:
-        k = 1000 if m.group(2).lower() == "k" else 1
+        k = _unit_scale(m.group(2))
         v = int(float(m.group(1)) * k)
         return {"min": v, "max": v, "period": period,
                 "state": SalaryState.HEURISTIC.value}
